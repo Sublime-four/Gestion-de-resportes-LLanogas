@@ -15,12 +15,14 @@ import Settings from "../pages/Settings";
 import Login from "../pages/Login";
 import Compliance from "../pages/Compliance";
 import Users from "../pages/Users";
+import ForgotPassword from "../pages/ForgotPassword";
+import LocationsMap from "../pages/LocationsMap";
 
 import AuthLayout from "../layouts/AuthLayout";
 import MainLayout from "../layouts/MainLayout";
 import useAuth from "../hooks/useAuth";
 
-// Ruta privada: solo si hay sesión
+// ---------- Ruta privada: solo si hay sesión ----------
 function PrivateRoute() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
@@ -32,12 +34,14 @@ function PrivateRoute() {
   return <Outlet />;
 }
 
+// ---------- Definición de rutas ----------
 export default function AppRouter() {
   return (
     <Routes>
-      {/* Auth */}
+      {/* Rutas de autenticación (sin sesión requerida) */}
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
       </Route>
 
       {/* App interna protegida */}
@@ -118,6 +122,18 @@ export default function AppRouter() {
           }
         />
       </Route>
+
+      <Route
+  path="/locations-map"
+  element={
+    <MainLayout
+      title="Mapa de localizaciones"
+      subtitle="Visualización geográfica de activos y puntos de operación."
+    >
+      <LocationsMap />
+    </MainLayout>
+  }
+/>
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

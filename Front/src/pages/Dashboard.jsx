@@ -1,5 +1,6 @@
 // src/pages/Dashboard.jsx
-import React from "react";
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   LineChart,
   Line,
@@ -16,56 +17,72 @@ import {
   Bar,
 } from "recharts";
 
-const complianceTrend = [
-  { mes: "Ago", cumplimiento: 86 },
-  { mes: "Sep", cumplimiento: 88 },
-  { mes: "Oct", cumplimiento: 90 },
-  { mes: "Nov", cumplimiento: 92 },
-  { mes: "Dic", cumplimiento: 94 },
-];
-
-const statusDistribution = [
-  { name: "A tiempo", value: 24 },
-  { name: "Tarde", value: 5 },
-  { name: "Pendientes", value: 8 },
-  { name: "Vencidos", value: 3 },
-];
-
-const entityRisk = [
-  { entidad: "SUI", vencidos: 2, riesgo: 4 },
-  { entidad: "Superservicios", vencidos: 1, riesgo: 3 },
-  { entidad: "ANH", vencidos: 0, riesgo: 1 },
-];
-
 const STATUS_COLORS = ["#16a34a", "#f59e0b", "#0f172a", "#dc2626"];
 
 export default function Dashboard() {
+  const navigate = useNavigate();
+
+  // ------- Datos que vendrán del backend --------
+  // TODO: rellenar estos estados con datos reales desde la API (useEffect / react-query / etc.)
+  const [kpis, setKpis] = useState({
+    complianceOnTime: null,      // número (porcentaje)
+    complianceDeltaLabel: null,  // texto tipo "+4 pts vs mes anterior"
+    complianceStatusLabel: null, // texto tipo "Positivo"
+
+    overdueReports: null,        // número
+    monthlyReports: null,        // número
+    entitiesAtRisk: null,        // número
+
+    serviceLevel: null,          // porcentaje
+    backlog: null,               // número
+  });
+
+  const [trendData, setTrendData] = useState([]); // [{ mes, cumplimiento }]
+  const [statusData, setStatusData] = useState([]); // [{ name, value }]
+  const [entityRiskData, setEntityRiskData] = useState([]); // [{ entidad, vencidos, riesgo }]
+  const [upcomingReports, setUpcomingReports] = useState([]); // [{ name, entity, owner, due, status, statusTone, frequency }]
+  const [recentActivity, setRecentActivity] = useState([]); // [{ time, title, detail, badge }]
+
+  // ------- Filtro de próximos vencimientos -------
+  const [statusFilter, setStatusFilter] = useState("Todos");
+
+  const filteredUpcoming = upcomingReports.filter((r) =>
+    statusFilter === "Todos" ? true : r.status === statusFilter
+  );
+
   return (
     <div className="space-y-6">
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KpiCard
           title="% Cumplimiento a tiempo"
-          value="92%"
-          subtitle="+4 pts vs mes anterior"
-          status="Positivo"
+          value={
+            kpis.complianceOnTime != null
+              ? `${kpis.complianceOnTime}%`
+              : "—"
+          }
+          subtitle={
+            kpis.complianceDeltaLabel || "Variación vs periodo anterior."
+          }
+          status={kpis.complianceStatusLabel || undefined}
+          variant="success"
         />
         <KpiCard
           title="Reportes vencidos"
-          value="3"
-          subtitle="2 críticos, 1 moderado"
+          value={kpis.overdueReports != null ? kpis.overdueReports : "—"}
+          subtitle="Total de reportes con vencimiento ya superado."
           variant="danger"
         />
         <KpiCard
-          title="Reportes este mes"
-          value="27"
-          subtitle="18 enviados, 6 en curso"
+          title="Reportes en el período"
+          value={kpis.monthlyReports != null ? kpis.monthlyReports : "—"}
+          subtitle="Cantidad de obligaciones en el período seleccionado."
           variant="neutral"
         />
         <KpiCard
           title="Entidades con riesgo"
-          value="2"
-          subtitle="SUI, Superservicios"
+          value={kpis.entitiesAtRisk != null ? kpis.entitiesAtRisk : "—"}
+          subtitle="Número de entidades con nivel de riesgo relevante."
           variant="warning"
         />
       </div>
@@ -76,74 +93,23 @@ export default function Dashboard() {
         <div className="xl:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col">
           <HeaderCard
             title="Evolución de cumplimiento"
-            subtitle="Porcentaje de reportes enviados a tiempo por mes"
-            pill="Últimos 5 meses"
+            subtitle="Porcentaje de reportes enviados a tiempo por mes."
+            pill="Serie temporal"
           />
           <div className="mt-4 h-64">
-            <ResponsiveContainer
-              width="100%"
-              height="100%"
-              minWidth={0}
-              minHeight={0}
-            >
-              <LineChart data={complianceTrend} margin={{ left: -24 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-                <YAxis
-                  unit="%"
-                  domain={[80, 100]}
-                  tick={{ fontSize: 11 }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    fontSize: 12,
-                    borderRadius: 12,
-                    borderColor: "#e5e7eb",
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="cumplimiento"
-                  stroke="#0f766e"
-                  strokeWidth={2.4}
-                  dot={{ r: 3 }}
-                  activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Distribución de estados */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col">
-          <HeaderCard
-            title="Estado de los reportes"
-            subtitle="Distribución actual del portafolio"
-          />
-          <div className="mt-2 flex-1 flex flex-col">
-            <div className="h-48">
+            {trendData.length === 0 ? (
+              <EmptyStateChart />
+            ) : (
               <ResponsiveContainer
                 width="100%"
                 height="100%"
                 minWidth={0}
                 minHeight={0}
               >
-                <PieChart>
-                  <Pie
-                    data={statusDistribution}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={45}
-                    outerRadius={70}
-                    paddingAngle={3}
-                  >
-                    {statusDistribution.map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={STATUS_COLORS[index % STATUS_COLORS.length]}
-                      />
-                    ))}
-                  </Pie>
+                <LineChart data={trendData} margin={{ left: -24 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                  <YAxis unit="%" tick={{ fontSize: 11 }} />
                   <Tooltip
                     contentStyle={{
                       fontSize: 12,
@@ -151,21 +117,80 @@ export default function Dashboard() {
                       borderColor: "#e5e7eb",
                     }}
                   />
-                  <Legend verticalAlign="bottom" height={36} />
-                </PieChart>
+                  <Line
+                    type="monotone"
+                    dataKey="cumplimiento"
+                    stroke="#0f766e"
+                    strokeWidth={2.4}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </LineChart>
               </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Distribución de estados */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col">
+          <HeaderCard
+            title="Estado de los reportes"
+            subtitle="Distribución actual del portafolio."
+          />
+          <div className="mt-2 flex-1 flex flex-col">
+            <div className="h-48">
+              {statusData.length === 0 ? (
+                <EmptyStateChart />
+              ) : (
+                <ResponsiveContainer
+                  width="100%"
+                  height="100%"
+                  minWidth={0}
+                  minHeight={0}
+                >
+                  <PieChart>
+                    <Pie
+                      data={statusData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={45}
+                      outerRadius={70}
+                      paddingAngle={3}
+                    >
+                      {statusData.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={STATUS_COLORS[index % STATUS_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        fontSize: 12,
+                        borderRadius: 12,
+                        borderColor: "#e5e7eb",
+                      }}
+                    />
+                    <Legend verticalAlign="bottom" height={36} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
               <MiniMetric
                 label="Nivel de servicio"
-                value="94%"
-                desc="Meta 90%"
+                value={
+                  kpis.serviceLevel != null
+                    ? `${kpis.serviceLevel}%`
+                    : "—"
+                }
+                desc="Porcentaje de servicios dentro de los SLA."
               />
               <MiniMetric
                 label="Backlog operativo"
-                value="11"
-                desc="Pendientes + vencidos"
+                value={kpis.backlog != null ? kpis.backlog : "—"}
+                desc="Suma de pendientes y vencidos."
               />
             </div>
           </div>
@@ -176,14 +201,33 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
         {/* Próximos vencimientos */}
         <div className="2xl:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
             <HeaderCard
               title="Próximos vencimientos"
-              subtitle="Obligaciones que vencen en los próximos 15 días"
+              subtitle="Obligaciones con vencimiento cercano."
             />
-            <button className="text-[11px] px-2.5 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50">
-              Ver calendario
-            </button>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {["Todos", "En proceso", "Pendiente"].map((label) => (
+                <button
+                  key={label}
+                  onClick={() => setStatusFilter(label)}
+                  className={[
+                    "text-[11px] px-2.5 py-1 rounded-full border transition",
+                    statusFilter === label
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                className="text-[11px] px-2.5 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50"
+                onClick={() => navigate("/calendar")}
+              >
+                Ver calendario
+              </button>
+            </div>
           </div>
 
           <table className="w-full text-xs text-left">
@@ -197,38 +241,20 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              <ReportRow
-                name="SUI - Información Comercial Mensual"
-                entity="SUI"
-                owner="Coordinación Comercial"
-                due="10/12/2025"
-                status="En proceso"
-                statusTone="warning"
-              />
-              <ReportRow
-                name="Superservicios - Indicadores de Calidad"
-                entity="Superservicios"
-                owner="Calidad del Servicio"
-                due="12/12/2025"
-                status="Pendiente"
-                statusTone="danger"
-              />
-              <ReportRow
-                name="SUI - Información Operativa Trimestral"
-                entity="SUI"
-                owner="Operaciones"
-                due="15/12/2025"
-                status="En elaboración"
-                statusTone="info"
-              />
-              <ReportRow
-                name="ANH - Balance de gas natural"
-                entity="ANH"
-                owner="Planeación"
-                due="18/12/2025"
-                status="En revisión interna"
-                statusTone="info"
-              />
+              {filteredUpcoming.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="py-4 pl-2 pr-2 text-[11px] text-slate-500 text-center"
+                  >
+                    No hay vencimientos próximos según los filtros actuales.
+                  </td>
+                </tr>
+              ) : (
+                filteredUpcoming.map((r) => (
+                  <ReportRow key={r.id || r.name} {...r} />
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -239,42 +265,46 @@ export default function Dashboard() {
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
             <HeaderCard
               title="Riesgo por entidad"
-              subtitle="Vencidos y nivel de riesgo relativo"
+              subtitle="Vencidos y nivel de riesgo relativo por regulador."
             />
             <div className="mt-4 h-40">
-              <ResponsiveContainer
-                width="100%"
-                height="100%"
-                minWidth={0}
-                minHeight={0}
-              >
-                <BarChart data={entityRisk} barSize={16}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    stroke="#e5e7eb"
-                  />
-                  <XAxis
-                    dataKey="entidad"
-                    tick={{ fontSize: 11 }}
-                    axisLine={false}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11 }}
-                    axisLine={false}
-                    allowDecimals={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      fontSize: 12,
-                      borderRadius: 12,
-                      borderColor: "#e5e7eb",
-                    }}
-                  />
-                  <Bar dataKey="vencidos" name="Vencidos" fill="#dc2626" />
-                  <Bar dataKey="riesgo" name="Riesgo" fill="#f97316" />
-                </BarChart>
-              </ResponsiveContainer>
+              {entityRiskData.length === 0 ? (
+                <EmptyStateChart />
+              ) : (
+                <ResponsiveContainer
+                  width="100%"
+                  height="100%"
+                  minWidth={0}
+                  minHeight={0}
+                >
+                  <BarChart data={entityRiskData} barSize={16}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#e5e7eb"
+                    />
+                    <XAxis
+                      dataKey="entidad"
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        fontSize: 12,
+                        borderRadius: 12,
+                        borderColor: "#e5e7eb",
+                      }}
+                    />
+                    <Bar dataKey="vencidos" name="Vencidos" fill="#dc2626" />
+                    <Bar dataKey="riesgo" name="Riesgo" fill="#f97316" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
@@ -282,29 +312,26 @@ export default function Dashboard() {
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
             <HeaderCard
               title="Actividad reciente"
-              subtitle="Últimos movimientos de reportes"
+              subtitle="Últimos movimientos de reportes."
             />
-            <ul className="mt-3 space-y-3 text-[11px]">
-              <TimelineItem
-                time="Hace 15 min"
-                title="SUI - Información Comercial Mensual"
-                detail="Se envió borrador a aprobación de Gerencia Comercial."
-                badge="En aprobación"
-              />
-              <TimelineItem
-                time="Hace 1 h"
-                title="Superservicios - Indicadores de Calidad"
-                detail="Se cargó archivo base de indicadores al sistema."
-                badge="Carga inicial"
-              />
-              <TimelineItem
-                time="Ayer"
-                title="ANH - Balance de gas natural"
-                detail="Se registró como 'En elaboración' por Planeación."
-                badge="Nuevo reporte"
-              />
-            </ul>
-            <button className="mt-3 w-full text-[11px] py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50">
+            {recentActivity.length === 0 ? (
+              <p className="mt-3 text-[11px] text-slate-500">
+                No hay actividad registrada aún. Aquí se mostrarán los eventos
+                recientes cuando el backend los provea.
+              </p>
+            ) : (
+              <>
+                <ul className="mt-3 space-y-3 text-[11px]">
+                  {recentActivity.map((item, idx) => (
+                    <TimelineItem key={idx} {...item} />
+                  ))}
+                </ul>
+              </>
+            )}
+            <button
+              className="mt-3 w-full text-[11px] py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50"
+              onClick={() => navigate("/reports")}
+            >
               Ver todo el historial
             </button>
           </div>
@@ -378,7 +405,7 @@ function MiniMetric({ label, value, desc }) {
   );
 }
 
-function ReportRow({ name, entity, owner, due, status, statusTone }) {
+function ReportRow({ name, entity, owner, due, status, statusTone, frequency }) {
   const statusColors = {
     warning: "bg-amber-100 text-amber-800",
     danger: "bg-red-100 text-red-800",
@@ -391,7 +418,10 @@ function ReportRow({ name, entity, owner, due, status, statusTone }) {
       <td className="py-2.5 pl-2 pr-2">
         <p className="font-medium text-[11px]">{name}</p>
         <p className="text-[11px] text-slate-500">
-          Frecuencia: <span className="font-medium">Mensual</span>
+          Frecuencia:{" "}
+          <span className="font-medium">
+            {frequency || "—"}
+          </span>
         </p>
       </td>
       <td className="py-2.5 pr-2 text-[11px] text-slate-600">{entity}</td>
@@ -418,9 +448,7 @@ function TimelineItem({ time, title, detail, badge }) {
       </div>
       <div className="flex-1">
         <div className="flex items-center justify-between gap-2 mb-0.5">
-          <p className="text-[11px] font-semibold text-slate-800">
-            {title}
-          </p>
+          <p className="text-[11px] font-semibold text-slate-800">{title}</p>
           {badge && (
             <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
               {badge}
@@ -431,5 +459,16 @@ function TimelineItem({ time, title, detail, badge }) {
         <p className="text-[10px] text-slate-400 mt-0.5">{time}</p>
       </div>
     </li>
+  );
+}
+
+function EmptyStateChart() {
+  return (
+    <div className="h-full w-full flex items-center justify-center">
+      <p className="text-[11px] text-slate-400">
+        Sin datos disponibles. Se mostrarán aquí cuando el backend los
+        proporcione.
+      </p>
+    </div>
   );
 }

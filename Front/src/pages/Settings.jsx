@@ -1,25 +1,137 @@
 // src/pages/Settings.jsx
-import React from "react";
+import React, { useState } from "react";
+
+const APPROVAL_OPTIONS = [
+  "1 nivel: Responsable del reporte",
+  "2 niveles: Responsable + Jefe inmediato",
+  "3 niveles: Responsable + Jefe + Dirección",
+];
 
 export default function Settings() {
+  // Estado central de configuración
+  // TODO: reemplazar este estado inicial por valores del backend (useEffect / react-query / etc.)
+  const [config, setConfig] = useState({
+    notifications: {
+      email: false,
+      inApp: false,
+      critical24h: false,
+      weeklySummary: false,
+    },
+    approvals: {
+      scheme: APPROVAL_OPTIONS[0],
+      blockWithoutApproval: false,
+      strongTrace: false,
+    },
+    compliance: {
+      targetOnTime: 0,
+      idealLeadDays: 0,
+      maxOverdue: 0,
+      earlyAlertDays: 0,
+    },
+    security: {
+      mfaAdmin: false,
+      logChanges: false,
+      exportAudit: false,
+    },
+  });
+
+  // TODO: poblar este campo desde backend (último cambio, usuario que guardó, etc.)
+  const [lastSavedBy, setLastSavedBy] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedFlag, setSavedFlag] = useState(false);
+
+  // Derivados para tarjetas de resumen (100% basados en config actual)
+  const summary = {
+    alertLevel: config.notifications.critical24h ? "Alto" : "Medio",
+    alertHelper: config.notifications.critical24h
+      ? "Alertas críticas activas a 24h de vencimiento."
+      : "Alertas solo informativas, sin disparo crítico a 24h.",
+    target: `${config.compliance.targetOnTime}%`,
+    backlogLabel:
+      Number(config.compliance.maxOverdue) === 0
+        ? "0 vencidos"
+        : `${config.compliance.maxOverdue} vencidos`,
+    backlogHelper:
+      Number(config.compliance.maxOverdue) === 0
+        ? "No se permiten vencimientos abiertos."
+        : "Se permite un backlog acotado de vencidos.",
+  };
+
+  const handleToggle = (path) => {
+    setConfig((prev) => {
+      const draft = structuredClone(prev);
+      let ref = draft;
+      for (let i = 0; i < path.length - 1; i++) {
+        ref = ref[path[i]];
+      }
+      const key = path[path.length - 1];
+      ref[key] = !ref[key];
+      return draft;
+    });
+    setSavedFlag(false);
+  };
+
+  const handleRadioChange = (value) => {
+    setConfig((prev) => ({
+      ...prev,
+      approvals: {
+        ...prev.approvals,
+        scheme: value,
+      },
+    }));
+    setSavedFlag(false);
+  };
+
+  const handleParamChange = (field, value) => {
+    setConfig((prev) => ({
+      ...prev,
+      compliance: {
+        ...prev.compliance,
+        [field]: value === "" ? "" : Number(value),
+      },
+    }));
+    setSavedFlag(false);
+  };
+
+  const handleSave = async () => {
+    // TODO: aquí va la llamada real al backend (PUT /settings, por ejemplo)
+    setSaving(true);
+    try {
+      const now = new Date();
+      const label = now.toLocaleString("es-CO", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      // En un escenario real, este valor debería venir de la respuesta del backend
+      setLastSavedBy(label);
+      setSavedFlag(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Resumen ejecutivo de configuración */}
+      {/* Resumen ejecutivo de configuración (dinámico) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SummaryCard
           label="Nivel de alertamiento"
-          value="Alto"
-          helper="Alertas críticas activas a 24h de vencimiento."
+          value={summary.alertLevel}
+          helper={summary.alertHelper}
         />
         <SummaryCard
           label="Meta de cumplimiento"
-          value="90%"
+          value={summary.target}
           helper="Objetivo mínimo para reportes a tiempo."
         />
         <SummaryCard
           label="Backlog tolerado"
-          value="0 vencidos"
-          helper="No se permiten vencimientos abiertos."
+          value={summary.backlogLabel}
+          helper={summary.backlogHelper}
         />
       </div>
 
@@ -36,21 +148,28 @@ export default function Settings() {
               <ToggleRow
                 label="Alertas por correo electrónico"
                 desc="Resumen diario con vencimientos próximos, atrasos y criticidad por entidad."
-                defaultOn
+                value={config.notifications.email}
+                onChange={() => handleToggle(["notifications", "email"])}
               />
               <ToggleRow
                 label="Recordatorios dentro del sistema"
                 desc="Bandeja de notificaciones con seguimiento de acciones pendientes."
-                defaultOn
+                value={config.notifications.inApp}
+                onChange={() => handleToggle(["notifications", "inApp"])}
               />
               <ToggleRow
                 label="Alertas críticas (24 horas)"
                 desc="Disparo inmediato cuando un reporte entra en zona roja de vencimiento."
-                defaultOn
+                value={config.notifications.critical24h}
+                onChange={() => handleToggle(["notifications", "critical24h"])}
               />
               <ToggleRow
                 label="Resumen semanal a directivos"
                 desc="Correo ejecutivo con KPIs de cumplimiento y riesgos por entidad."
+                value={config.notifications.weeklySummary}
+                onChange={() =>
+                  handleToggle(["notifications", "weeklySummary"])
+                }
               />
             </div>
           </SectionCard>
@@ -63,23 +182,24 @@ export default function Settings() {
             <div className="space-y-3 text-xs">
               <RadioRow
                 label="Esquema de aprobación"
-                options={[
-                  "1 nivel: Responsable del reporte",
-                  "2 niveles: Responsable + Jefe inmediato",
-                  "3 niveles: Responsable + Jefe + Dirección",
-                ]}
-                defaultValue="2 niveles: Responsable + Jefe inmediato"
+                options={APPROVAL_OPTIONS}
+                value={config.approvals.scheme}
+                onChange={handleRadioChange}
               />
               <Divider />
               <ToggleRow
                 label="Bloquear envío sin aprobación"
                 desc="No se permite marcar como enviado si no está aprobado en todos los niveles definidos."
-                defaultOn
+                value={config.approvals.blockWithoutApproval}
+                onChange={() =>
+                  handleToggle(["approvals", "blockWithoutApproval"])
+                }
               />
               <ToggleRow
                 label="Trazabilidad reforzada"
                 desc="Registrar quién aprueba, cuándo y desde qué canal."
-                defaultOn
+                value={config.approvals.strongTrace}
+                onChange={() => handleToggle(["approvals", "strongTrace"])}
               />
             </div>
           </SectionCard>
@@ -95,32 +215,47 @@ export default function Settings() {
             <div className="space-y-3 text-xs">
               <ParamRow
                 label="Meta de cumplimiento a tiempo"
-                defaultValue="90"
+                value={config.compliance.targetOnTime}
                 suffix="%"
+                onChange={(v) => handleParamChange("targetOnTime", v)}
               />
               <ParamRow
                 label="Días de antelación ideal para envío"
-                defaultValue="5"
+                value={config.compliance.idealLeadDays}
                 suffix="días"
+                onChange={(v) => handleParamChange("idealLeadDays", v)}
               />
               <ParamRow
                 label="Máximo de reportes vencidos aceptables"
-                defaultValue="0"
+                value={config.compliance.maxOverdue}
                 suffix="reportes"
+                onChange={(v) => handleParamChange("maxOverdue", v)}
               />
               <ParamRow
                 label="Umbral de alerta temprana"
-                defaultValue="3"
+                value={config.compliance.earlyAlertDays}
                 suffix="días antes del vencimiento"
+                onChange={(v) => handleParamChange("earlyAlertDays", v)}
               />
             </div>
             <div className="mt-4 flex items-center justify-between text-[11px] text-slate-500">
               <span>
                 Estos parámetros impactan directamente los KPIs del dashboard.
               </span>
-              <button className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[11px] font-medium hover:bg-slate-800">
-                Guardar cambios
-              </button>
+              <div className="flex items-center gap-2">
+                {savedFlag && (
+                  <span className="text-emerald-600 text-[11px]">
+                    Cambios guardados ✔
+                  </span>
+                )}
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[11px] font-medium hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {saving ? "Guardando..." : "Guardar cambios"}
+                </button>
+              </div>
             </div>
           </SectionCard>
 
@@ -133,22 +268,27 @@ export default function Settings() {
               <ToggleRow
                 label="Requerir doble autenticación"
                 desc="Solicitar un segundo factor para usuarios con rol de Administrador."
+                value={config.security.mfaAdmin}
+                onChange={() => handleToggle(["security", "mfaAdmin"])}
               />
               <ToggleRow
                 label="Registrar cambios de configuración"
                 desc="Guardar histórico de modificaciones en parámetros críticos."
-                defaultOn
+                value={config.security.logChanges}
+                onChange={() => handleToggle(["security", "logChanges"])}
               />
               <ToggleRow
                 label="Exportar bitácora de auditoría"
                 desc="Permitir descarga periódica de logs para revisión externa."
+                value={config.security.exportAudit}
+                onChange={() => handleToggle(["security", "exportAudit"])}
               />
             </div>
             <Divider />
             <div className="flex items-center justify-between text-[11px] text-slate-500">
               <span>Última modificación de configuración:</span>
               <span className="font-medium text-slate-700">
-                02/12/2025 · 09:34 · Yohan Piñarte
+                {lastSavedBy || "Sin registro aún"}
               </span>
             </div>
           </SectionCard>
@@ -186,7 +326,7 @@ function SummaryCard({ label, value, helper }) {
   );
 }
 
-function ToggleRow({ label, desc, defaultOn }) {
+function ToggleRow({ label, desc, value, onChange }) {
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="max-w-xs">
@@ -195,9 +335,10 @@ function ToggleRow({ label, desc, defaultOn }) {
       </div>
       <button
         type="button"
+        onClick={onChange}
         className={[
           "relative inline-flex h-5 w-10 items-center rounded-full border transition-colors",
-          defaultOn
+          value
             ? "bg-emerald-500 border-emerald-500"
             : "bg-slate-200 border-slate-300",
         ].join(" ")}
@@ -205,7 +346,7 @@ function ToggleRow({ label, desc, defaultOn }) {
         <span
           className={[
             "h-4 w-4 rounded-full bg-white shadow transform transition-transform",
-            defaultOn ? "translate-x-5" : "translate-x-1",
+            value ? "translate-x-5" : "translate-x-1",
           ].join(" ")}
         />
       </button>
@@ -213,14 +354,15 @@ function ToggleRow({ label, desc, defaultOn }) {
   );
 }
 
-function ParamRow({ label, defaultValue, suffix }) {
+function ParamRow({ label, value, suffix, onChange }) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex items-center justify_between gap-3">
       <p className="text-[11px] text-slate-700">{label}</p>
       <div className="flex items-center gap-2">
         <input
           type="number"
-          defaultValue={defaultValue}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           className="w-20 text-xs border border-slate-200 rounded-lg px-2 py-1 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-200"
         />
         {suffix && (
@@ -233,27 +375,28 @@ function ParamRow({ label, defaultValue, suffix }) {
   );
 }
 
-function RadioRow({ label, options, defaultValue }) {
+function RadioRow({ label, options, value, onChange }) {
   return (
     <div className="space-y-2">
       <p className="text-[11px] font-semibold text-slate-800">{label}</p>
       <div className="space-y-1.5">
         {options.map((opt) => {
-          const isDefault = opt === defaultValue;
+          const isActive = opt === value;
           return (
             <label
               key={opt}
               className="flex items-center gap-2 text-[11px] text-slate-700 cursor-pointer"
+              onClick={() => onChange(opt)}
             >
               <span
                 className={[
                   "inline-flex h-3 w-3 items-center justify-center rounded-full border",
-                  isDefault
+                  isActive
                     ? "border-slate-900 bg-slate-900"
                     : "border-slate-300 bg-white",
                 ].join(" ")}
               >
-                {isDefault && (
+                {isActive && (
                   <span className="h-1.5 w-1.5 rounded-full bg-white" />
                 )}
               </span>

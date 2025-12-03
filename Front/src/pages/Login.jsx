@@ -1,83 +1,266 @@
 // src/pages/Login.jsx
-import React from "react";
+import React, { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import useAuth from "../hooks/useAuth";
+import logoLlanogas from "../assets/logo-llanogas.png";
+import gasBg from "../assets/gas.jpg"; // <= asegúrate del nombre/ruta
 
 export default function Login() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // ✅ sin correo tuyo hardcodeado
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  const from = location.state?.from?.pathname || "/dashboard";
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (loading) return;
+    setLoading(true);
+
+    // TODO: reemplazar por respuesta real de la API de autenticación
+    const userPayload = {
+      email,
+      // estos campos se deberían poblar desde el backend
+      name: "",
+      role: "",
+    };
+
+    try {
+      await login(userPayload, { remember });
+      navigate(from, { replace: true });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_0_0,#f97316,transparent_55%),radial-gradient(circle_at_100%_100%,#22c55e,transparent_55%)] opacity-30" />
-      <div className="relative z-10 w-full max-w-md mx-4">
-        <div className="bg-slate-950/80 border border-slate-800 rounded-2xl shadow-2xl p-6 backdrop-blur">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-amber-400 to-rose-500 flex items-center justify-center text-sm font-bold text-slate-950">
-              LG
+    <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center">
+      {/* Contenedor principal */}
+      <div className="w-full max-w-6xl h-[560px] lg:h-[600px] rounded-[32px] overflow-hidden bg-slate-900/80 border border-sky-500/10 shadow-[0_40px_140px_rgba(15,23,42,0.9)] backdrop-blur-xl flex">
+        {/* Panel izquierdo: formulario */}
+        <div className="w-full lg:w-[52%] h-full px-8 lg:px-10 py-8 flex flex-col text-slate-100">
+          {/* “Barra de ventana” */}
+          <div className="flex items-center gap-2 mb-6">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500/80" />
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+          </div>
+
+          {/* Branding */}
+          <div className="flex items-center gap-3 mb-8">
+            <div className="h-10 w-10 rounded-2xl bg-sky-500/20 border border-sky-400/30 flex items-center justify-center overflow-hidden">
+              <img
+                src={logoLlanogas}
+                alt="Llanogas"
+                className="w-9 h-9 object-contain"
+              />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-white">
-                LLANOGAS Compliance
-              </h1>
+              <p className="text-xs font-medium tracking-[0.22em] uppercase text-sky-300">
+                LLANOGAS
+              </p>
               <p className="text-[11px] text-slate-400">
-                Plataforma de gestión de reportes regulatorios
+                Plataforma de reportes regulatorios
               </p>
             </div>
           </div>
 
-          <h2 className="text-sm font-semibold text-white mb-1">
-            Inicia sesión
-          </h2>
-          <p className="text-[11px] text-slate-400 mb-4">
-            Usa tus credenciales corporativas para continuar.
-          </p>
+          {/* Título + copy */}
+          <div className="mb-8">
+            <h1 className="text-2xl lg:text-3xl font-semibold text-slate-50 mb-2">
+              Bienvenido de nuevo
+            </h1>
+            <p className="text-sm text-slate-400 max-w-md">
+              Ingresa para gestionar el cumplimiento regulatorio, los
+              vencimientos y el estado de los reportes en un solo panel.
+            </p>
+          </div>
 
-          <form className="space-y-3 text-xs">
-            <div>
-              <label className="block text-[11px] text-slate-300 mb-1">
+          {/* Formulario */}
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-4 text-xs flex-1 flex flex-col"
+          >
+            {/* Email */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-slate-300">
                 Correo corporativo
               </label>
-              <input
-                type="email"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                placeholder="tucorreo@llanogas.com"
-              />
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 text-slate-500 text-sm">
+                  ✉
+                </span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full h-10 rounded-xl bg-slate-900/60 border border-slate-700/70 pl-9 pr-3 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/70 focus:border-sky-400 transition"
+                  placeholder="usuario@llanogas.com"
+                  autoComplete="email"
+                  required
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-[11px] text-slate-300 mb-1">
+
+            {/* Password */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium text-slate-300">
                 Contraseña
               </label>
-              <input
-                type="password"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                placeholder="••••••••"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-[11px] text-slate-300">
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 text-slate-500 text-sm">
+                  🔒
+                </span>
                 <input
-                  type="checkbox"
-                  className="h-3 w-3 rounded border-slate-600 bg-slate-900"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full h-10 rounded-xl bg-slate-900/60 border border-slate-700/70 pl-9 pr-10 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/70 focus:border-sky-400 transition"
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  required
                 />
-                Recordar sesión
-              </label>
-              <button
-                type="button"
-                className="text-[11px] text-emerald-400 hover:text-emerald-300"
-              >
-                Olvidé mi contraseña
-              </button>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                {/* Remember me */}
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={() => setRemember((v) => !v)}
+                    className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-900/80 text-sky-500 focus:ring-sky-500"
+                  />
+                  <span>Recordarme en este equipo</span>
+                </label>
+               
+
+<button
+  type="button"
+  onClick={() => navigate("/forgot-password")}
+  className="text-[11px] text-sky-400 hover:text-sky-300"
+>
+  ¿Olvidaste tu contraseña?
+</button>
+
+              </div>
             </div>
 
+            {/* Botón principal */}
             <button
               type="submit"
-              className="w-full mt-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs py-2 rounded-lg"
+              disabled={loading}
+              className="mt-4 h-10 w-full rounded-xl bg-sky-500 text-xs font-semibold text-white shadow-[0_14px_40px_rgba(56,189,248,0.45)] hover:bg-sky-400 transition disabled:opacity-70 disabled:cursor-wait"
             >
-              Entrar
+              {loading ? "Ingresando..." : "Entrar al panel"}
             </button>
-          </form>
 
-          <p className="mt-4 text-[10px] text-slate-500 text-center">
-            Acceso restringido. Solo usuarios autorizados de LLANOGAS.
-          </p>
+            {/* Footer legal */}
+            <div className="mt-4 text-[11px] text-slate-500">
+              <p>Acceso exclusivo para usuarios internos.</p>
+              <p className="mt-1">
+                ¿Necesitas acceso? Visita{" "}
+                <a
+                  href="https://www.llanogas.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
+                >
+                  www.llanogas.com
+                </a>
+                .
+              </p>
+            </div>
+          </form>
+        </div>
+
+        {/* Panel derecho: imagen de gas + tarjetas de información */}
+        <div className="hidden lg:block relative flex-1 group overflow-hidden">
+          {/* Fondo con imagen */}
+          <div className="absolute inset-0">
+            <img
+              src={gasBg}
+              alt="Gas natural Llanogas"
+              className="w-full h-full object-cover scale-110 transform transition-transform duration-[2500ms] group-hover:scale-125"
+            />
+            {/* Capa de degradado */}
+            <div className="absolute inset-0 bg-gradient-to-br from-slate-950/80 via-sky-700/45 to-emerald-500/40 mix-blend-soft-light" />
+            {/* Glow circular simulando el quemador */}
+            <div className="absolute -bottom-24 right-[-12%] w-[440px] h-[440px] rounded-full bg-sky-400/25 blur-3xl" />
+          </div>
+
+          {/* Contenido sobre la imagen */}
+          <div className="relative z-10 h-full flex flex-col justify-between p-8 gap-4">
+            {/* Tarjeta principal arriba (tipo “cuadro ejecutivo”) */}
+            <div className="max-w-sm rounded-2xl bg-slate-900/80 border border-sky-400/40 px-5 py-4 shadow-[0_22px_70px_rgba(15,23,42,0.95)] backdrop-blur-md">
+              <p className="text-[10px] font-semibold text-sky-300 uppercase tracking-[0.16em] mb-2">
+                Centro regulatorio Llanogas
+              </p>
+              <p className="text-[11px] text-slate-100 mb-3">
+                Consolida la gestión de reportes regulatorios en un solo lugar:
+                vencimientos, estados y responsables con trazabilidad completa.
+              </p>
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <InfoChip title="Vencimientos" detail="Calendario centralizado" />
+                <InfoChip title="Alertas" detail="Notificaciones configurables" />
+                <InfoChip title="Trazabilidad" detail="Historial de envíos" />
+              </div>
+            </div>
+
+            {/* Bloque inferior con dos cuadritos tipo KPI descriptivo */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 self-stretch max-w-md ml-auto">
+              <SmallInfoCard
+                label="Visión ejecutiva"
+                title="Dashboard de cumplimiento"
+                description="Indicadores para seguimiento de obligaciones por entidad, frecuencia y criticidad."
+              />
+              <SmallInfoCard
+                label="Trabajo colaborativo"
+                title="Flujos y responsables"
+                description="Asigna responsables, define aprobaciones y registra cambios sobre cada reporte."
+              />
+            </div>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* Subcomponentes pequeños */
+
+function Badge({ children }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-slate-900/80 border border-sky-500/40 px-2.5 py-0.5 text-[10px] text-sky-100">
+      {children}
+    </span>
+  );
+}
+
+function InfoChip({ title, detail }) {
+  return (
+    <div className="rounded-xl bg-slate-900/70 border border-slate-700/60 px-3 py-2">
+      <p className="text-[10px] font-semibold text-slate-100">{title}</p>
+      <p className="text-[10px] text-slate-400">{detail}</p>
+    </div>
+  );
+}
+
+function SmallInfoCard({ label, title, description }) {
+  return (
+    <div className="rounded-2xl bg-slate-900/80 border border-emerald-400/40 px-4 py-3 shadow-[0_18px_60px_rgba(15,23,42,0.9)] backdrop-blur-md">
+      <p className="text-[10px] uppercase tracking-[0.16em] text-emerald-300 mb-1">
+        {label}
+      </p>
+      <p className="text-[11px] font-semibold text-slate-50 mb-1">
+        {title}
+      </p>
+      <p className="text-[11px] text-slate-300">{description}</p>
     </div>
   );
 }

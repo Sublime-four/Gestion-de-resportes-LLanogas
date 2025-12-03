@@ -1,42 +1,6 @@
 // src/pages/Calendar.jsx
 import React, { useMemo, useState } from "react";
 
-// Eventos de ejemplo
-const events = [
-  {
-    id: 1,
-    datetime: "2025-12-10T10:00:00",
-    title: "SUI - Información Comercial Mensual",
-    entity: "SUI",
-    status: "En proceso",
-    criticality: "Medio",
-  },
-  {
-    id: 2,
-    datetime: "2025-12-12T15:00:00",
-    title: "Superservicios - Indicadores de Calidad",
-    entity: "Superservicios",
-    status: "Pendiente",
-    criticality: "Alto",
-  },
-  {
-    id: 3,
-    datetime: "2025-12-15T09:00:00",
-    title: "SUI - Información Operativa Trimestral",
-    entity: "SUI",
-    status: "En elaboración",
-    criticality: "Medio",
-  },
-  {
-    id: 4,
-    datetime: "2025-12-18T11:00:00",
-    title: "ANH - Balance de gas natural",
-    entity: "ANH",
-    status: "En revisión interna",
-    criticality: "Bajo",
-  },
-];
-
 const STATUS_BADGE = {
   "En proceso": "bg-amber-50 text-amber-800",
   Pendiente: "bg-red-50 text-red-700",
@@ -50,6 +14,7 @@ const CRIT_BADGE = {
   Bajo: "bg-emerald-100 text-emerald-800",
 };
 
+// Utils
 function parseDate(dateStr) {
   return new Date(dateStr);
 }
@@ -62,17 +27,68 @@ function isSameDay(d1, d2) {
   );
 }
 
+// Filtro de rango de tiempo
+function isInRange(date, currentMonth, range) {
+  const startMonth = new Date(
+    currentMonth.getFullYear(),
+    currentMonth.getMonth(),
+    1
+  );
+
+  if (range === "month") {
+    return (
+      date.getFullYear() === currentMonth.getFullYear() &&
+      date.getMonth() === currentMonth.getMonth()
+    );
+  }
+
+  if (range === "3months") {
+    const end = new Date(startMonth.getFullYear(), startMonth.getMonth() + 3, 1);
+    return date >= startMonth && date < end;
+  }
+
+  // "year"
+  return date.getFullYear() === currentMonth.getFullYear();
+}
+
 export default function Calendar() {
   const today = new Date();
+
+  // ⚙️ Eventos que vienen del backend
+  // TODO: poblar este estado desde tu API (useEffect / react-query / etc.)
+  const [events, setEvents] = useState([]); // [{ id, datetime, title, entity, status, criticality }]
+
   const [currentMonth, setCurrentMonth] = useState(
     new Date(today.getFullYear(), today.getMonth(), 1)
   );
   const [selectedDate, setSelectedDate] = useState(today);
+  const [rangeFilter, setRangeFilter] = useState("month"); // month | 3months | year
+  const [entityFilter, setEntityFilter] = useState("all"); // all | <entity>
 
   const monthLabel = currentMonth.toLocaleDateString("es-CO", {
     month: "long",
     year: "numeric",
   });
+
+  // Entidades disponibles según los eventos
+  const entityOptions = useMemo(() => {
+    const uniques = Array.from(new Set(events.map((e) => e.entity))).filter(
+      Boolean
+    );
+    return uniques;
+  }, [events]);
+
+  // Eventos filtrados por rango y entidad
+  const filteredEvents = useMemo(() => {
+    return events.filter((e) => {
+      const d = parseDate(e.datetime);
+
+      if (!isInRange(d, currentMonth, rangeFilter)) return false;
+      if (entityFilter !== "all" && e.entity !== entityFilter) return false;
+
+      return true;
+    });
+  }, [events, currentMonth, rangeFilter, entityFilter]);
 
   // Días a mostrar en la grilla del mes
   const monthDays = useMemo(() => {
@@ -91,7 +107,7 @@ export default function Calendar() {
     const startWeekDay = (startOfMonth.getDay() + 6) % 7; // lunes = 0
     const totalDays = endOfMonth.getDate();
 
-    // días vacíos antes del 1
+    // huecos antes del 1
     for (let i = 0; i < startWeekDay; i++) {
       days.push(null);
     }
@@ -106,58 +122,59 @@ export default function Calendar() {
     return days;
   }, [currentMonth]);
 
-  // Eventos por día
+  // Eventos por día (con filtros aplicados)
   const eventsByDay = useMemo(() => {
     const map = {};
-    events.forEach((e) => {
+    filteredEvents.forEach((e) => {
       const d = parseDate(e.datetime);
       const key = d.toISOString().slice(0, 10);
       if (!map[key]) map[key] = [];
       map[key].push(e);
     });
     return map;
-  }, []);
+  }, [filteredEvents]);
 
   const selectedKey = selectedDate.toISOString().slice(0, 10);
   const eventsForSelectedDay = eventsByDay[selectedKey] || [];
 
+  // Próximos vencimientos (filtrados)
   const upcomingEvents = useMemo(() => {
     const now = new Date();
-    return [...events]
+    return [...filteredEvents]
       .filter((e) => parseDate(e.datetime) >= now)
       .sort((a, b) => parseDate(a.datetime) - parseDate(b.datetime))
       .slice(0, 4);
-  }, []);
+  }, [filteredEvents]);
 
-  const metrics = {
-    total: events.length,
-    critical: events.filter((e) => e.criticality === "Alto").length,
-    pending: events.filter((e) => e.status === "Pendiente").length,
-    thisWeek: events.filter((e) => {
+  // Métricas del periodo (sobre eventos filtrados)
+  const metrics = useMemo(() => {
+    const total = filteredEvents.length;
+    const critical = filteredEvents.filter((e) => e.criticality === "Alto").length;
+    const pending = filteredEvents.filter((e) => e.status === "Pendiente").length;
+    const thisWeek = filteredEvents.filter((e) => {
       const d = parseDate(e.datetime);
-      const diff =
-        (d - today) / (1000 * 60 * 60 * 24); // días desde hoy
-      return diff >= 0 && diff <= 7;
-    }).length,
-  };
+      const diffDays = (d - today) / (1000 * 60 * 60 * 24);
+      return diffDays >= 0 && diffDays <= 7;
+    }).length;
+
+    return { total, critical, pending, thisWeek };
+  }, [filteredEvents, today]);
 
   const handlePrevMonth = () => {
-    setCurrentMonth(
-      (m) => new Date(m.getFullYear(), m.getMonth() - 1, 1)
-    );
+    setCurrentMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
   };
 
   const handleNextMonth = () => {
-    setCurrentMonth(
-      (m) => new Date(m.getFullYear(), m.getMonth() + 1, 1)
-    );
+    setCurrentMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
   };
 
+  // 🟢 Botón "Hoy" funcionando y reseteando filtros clave
   const handleToday = () => {
-    setCurrentMonth(
-      new Date(today.getFullYear(), today.getMonth(), 1)
-    );
+    const base = new Date(today.getFullYear(), today.getMonth(), 1);
+    setCurrentMonth(base);
     setSelectedDate(today);
+    setRangeFilter("month");     // volvemos al mes actual
+    setEntityFilter("all");      // todas las entidades
   };
 
   return (
@@ -189,22 +206,33 @@ export default function Calendar() {
         </div>
 
         <div className="flex flex-wrap gap-3 text-xs">
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50">
-            <option>Mes actual</option>
-            <option>Próximos 3 meses</option>
-            <option>Año completo</option>
+          <select
+            value={rangeFilter}
+            onChange={(e) => setRangeFilter(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+          >
+            <option value="month">Mes actual</option>
+            <option value="3months">Próximos 3 meses</option>
+            <option value="year">Año completo</option>
           </select>
-          <select className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50">
-            <option>Todas las entidades</option>
-            <option>SUI</option>
-            <option>Superservicios</option>
-            <option>ANH</option>
+
+          <select
+            value={entityFilter}
+            onChange={(e) => setEntityFilter(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+          >
+            <option value="all">Todas las entidades</option>
+            {entityOptions.map((ent) => (
+              <option key={ent} value={ent}>
+                {ent}
+              </option>
+            ))}
           </select>
         </div>
 
         <div className="text-[11px] text-slate-500">
-          {metrics.total} vencimientos en el periodo •{" "}
-          {metrics.critical} críticos • {metrics.thisWeek} esta semana
+          {metrics.total} vencimientos en el periodo • {metrics.critical} críticos
+          • {metrics.thisWeek} esta semana
         </div>
       </div>
 
@@ -270,7 +298,7 @@ export default function Calendar() {
           </div>
         </div>
 
-        {/* Panel derecho: agenda del día + próximos vencimientos + métricas */}
+        {/* Panel derecho: agenda + próximos + métricas */}
         <div className="space-y-4">
           {/* Agenda del día */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4">
@@ -292,16 +320,14 @@ export default function Calendar() {
 
             {eventsForSelectedDay.length === 0 ? (
               <p className="mt-3 text-[11px] text-slate-500">
-                No hay vencimientos programados para este día.
+                No hay vencimientos programados para este día bajo los filtros
+                actuales.
               </p>
             ) : (
               <ul className="mt-3 space-y-3 text-[11px]">
                 {eventsForSelectedDay
                   .slice()
-                  .sort(
-                    (a, b) =>
-                      parseDate(a.datetime) - parseDate(b.datetime)
-                  )
+                  .sort((a, b) => parseDate(a.datetime) - parseDate(b.datetime))
                   .map((e) => {
                     const d = parseDate(e.datetime);
                     const timeLabel = d.toLocaleTimeString("es-CO", {
@@ -320,9 +346,7 @@ export default function Calendar() {
                           <p className="font-semibold text-slate-800">
                             {e.title}
                           </p>
-                          <p className="text-slate-500">
-                            Entidad: {e.entity}
-                          </p>
+                          <p className="text-slate-500">Entidad: {e.entity}</p>
                           <div className="mt-1 flex flex-wrap gap-1.5">
                             <span
                               className={[
@@ -356,43 +380,49 @@ export default function Calendar() {
             <h3 className="text-sm font-semibold text-slate-900 mb-2">
               Próximos vencimientos
             </h3>
-            <ul className="space-y-2 text-[11px]">
-              {upcomingEvents.map((e) => {
-                const d = parseDate(e.datetime);
-                const dateLabel = d.toLocaleDateString("es-CO", {
-                  day: "2-digit",
-                  month: "short",
-                });
-                const timeLabel = d.toLocaleTimeString("es-CO", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
-                return (
-                  <li
-                    key={e.id}
-                    className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2"
-                  >
-                    <div>
-                      <p className="font-semibold text-slate-800">
-                        {e.title}
-                      </p>
-                      <p className="text-slate-500">
-                        {dateLabel} · {timeLabel} · {e.entity}
-                      </p>
-                    </div>
-                    <span
-                      className={[
-                        "inline-flex px-2.5 py-1 rounded-full text-[10px] font-medium",
-                        STATUS_BADGE[e.status] ||
-                          "bg-slate-100 text-slate-700",
-                      ].join(" ")}
+            {upcomingEvents.length === 0 ? (
+              <p className="text-[11px] text-slate-500">
+                No hay vencimientos próximos bajo los filtros actuales.
+              </p>
+            ) : (
+              <ul className="space-y-2 text-[11px]">
+                {upcomingEvents.map((e) => {
+                  const d = parseDate(e.datetime);
+                  const dateLabel = d.toLocaleDateString("es-CO", {
+                    day: "2-digit",
+                    month: "short",
+                  });
+                  const timeLabel = d.toLocaleTimeString("es-CO", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  });
+                  return (
+                    <li
+                      key={e.id}
+                      className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2"
                     >
-                      {e.status}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+                      <div>
+                        <p className="font-semibold text-slate-800">
+                          {e.title}
+                        </p>
+                        <p className="text-slate-500">
+                          {dateLabel} · {timeLabel} · {e.entity}
+                        </p>
+                      </div>
+                      <span
+                        className={[
+                          "inline-flex px-2.5 py-1 rounded-full text-[10px] font-medium",
+                          STATUS_BADGE[e.status] ||
+                            "bg-slate-100 text-slate-700",
+                        ].join(" ")}
+                      >
+                        {e.status}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
 
           {/* Métricas del periodo */}
@@ -413,7 +443,7 @@ export default function Calendar() {
   );
 }
 
-/* Components auxiliares */
+/* Componentes auxiliares */
 
 function MetricCard({ label, value }) {
   return (

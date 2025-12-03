@@ -1,10 +1,86 @@
 // src/pages/Reports.jsx
-import React, { useState, useRef } from "react";
-import jsPDF from "jspdf";
+import React, { useState, useRef, useEffect } from "react";
+import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 
-const reports = [
-];
+const reports = [];
+
+// ------- Utilidades de fecha / criticidad -------
+
+function parseDateString(dateStr) {
+  if (!dateStr) return null;
+  const iso = new Date(dateStr);
+  if (!isNaN(iso)) return iso;
+
+  const parts = dateStr.split("/");
+  if (parts.length === 3) {
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const y = parseInt(parts[2], 10);
+    return new Date(y, m, d);
+  }
+  return null;
+}
+
+function addMonthsSafe(date, months) {
+  const d = new Date(date.getTime());
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+  if (d.getDate() !== day) {
+    d.setDate(0);
+  }
+  return d;
+}
+
+function computeNextDue(startDateStr, frecuencia) {
+  const start = parseDateString(startDateStr);
+  if (!start) return null;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let next = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+
+  const freqMap = {
+    Mensual: 1,
+    Trimestral: 3,
+    Semestral: 6,
+    Anual: 12,
+  };
+  const step = freqMap[frecuencia] || 1;
+
+  while (next <= today) {
+    next = addMonthsSafe(next, step);
+    if (next.getFullYear() > now.getFullYear() + 10) break;
+  }
+  return next;
+}
+
+function formatDate(d) {
+  if (!d) return "-";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function monthsUntil(date) {
+  if (!date) return null;
+  const now = new Date();
+  return (
+    (date.getFullYear() - now.getFullYear()) * 12 +
+    (date.getMonth() - now.getMonth())
+  );
+}
+
+function criticidadFromMonths(months) {
+  if (months === null || months === undefined) return "-";
+  if (months <= 1) return "Crítica";
+  if (months >= 2 && months <= 6) return "Alta";
+  if (months >= 7 && months <= 10) return "Media";
+  return "Baja";
+}
+
+// --------------- Componente principal ---------------
 
 export default function Reports() {
   const [showModal, setShowModal] = useState(false);
@@ -14,7 +90,6 @@ export default function Reports() {
     entidadControl: "",
     baseLegal: "",
     fechaInicio: "",
-    // Responsables: separar nombre y CC
     responsableElaboracionName: "",
     responsableElaboracionCC: "",
     responsableSupervisionName: "",
@@ -23,107 +98,61 @@ export default function Reports() {
     correosNotificacion: "",
     frecuencia: "Mensual",
   });
-  
-  // Cargar reportes del localStorage al iniciar
+
   const [reportesCreados, setReportesCreados] = useState(() => {
+    if (typeof window === "undefined") return [];
     const reportesGuardados = localStorage.getItem("reportesCreados");
     return reportesGuardados ? JSON.parse(reportesGuardados) : [];
   });
-  
-  const reportesRef = useRef();
 
-  // Estado para controlar filas expandidas
+  const reportesRef = useRef(null);
+
+  // Filas expandidas
   const [expandedIds, setExpandedIds] = useState([]);
   const toggleExpand = (id) => {
-    setExpandedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setExpandedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   };
 
-  // Búsqueda global: busca en cualquier campo de los reportes
+  // Filtros / búsqueda
   const [searchQuery, setSearchQuery] = useState("");
   const searchLower = searchQuery.trim().toLowerCase();
   const [selectedEntity, setSelectedEntity] = useState("Todas");
   const [selectedFrequency, setSelectedFrequency] = useState("Todas");
-  const filteredReportes = reportesCreados.filter((rep) =>
-    Object.values(rep).join(" ").toLowerCase().includes(searchLower)
-  );
-  const filteredReports = reports.filter((r) =>
-    Object.values(r).join(" ").toLowerCase().includes(searchLower)
-  );
 
-  function parseDateString(dateStr) {
-    if (!dateStr) return null;
-    // try ISO first
-    const iso = new Date(dateStr);
-    if (!isNaN(iso)) return iso;
-    // try dd/mm/yyyy
-    const parts = dateStr.split("/");
-    if (parts.length === 3) {
-      const d = parseInt(parts[0], 10);
-      const m = parseInt(parts[1], 10) - 1;
-      const y = parseInt(parts[2], 10);
-      return new Date(y, m, d);
+  // Hoy normalizado
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  // Estado manual de cada reporte (Activo/Pendiente)
+  const [statusMap, setStatusMap] = useState(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = localStorage.getItem("reportStatuses");
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
     }
-    return null;
-  }
+  });
 
-  function addMonthsSafe(date, months) {
-    const d = new Date(date.getTime());
-    const day = d.getDate();
-    d.setMonth(d.getMonth() + months);
-    // handle month overflow
-    if (d.getDate() !== day) {
-      d.setDate(0); // last day previous month
+  useEffect(() => {
+    try {
+      localStorage.setItem("reportStatuses", JSON.stringify(statusMap));
+    } catch {
+      // ignore
     }
-    return d;
-  }
+  }, [statusMap]);
 
-  function computeNextDue(startDateStr, frecuencia) {
-    const start = parseDateString(startDateStr);
-    if (!start) return null;
-    const now = new Date();
-    // Normalize now to start of day (00:00:00)
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    let next = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-    const freqMap = {
-      Mensual: 1,
-      Trimestral: 3,
-      Semestral: 6,
-      Anual: 12,
-    };
-    const step = freqMap[frecuencia] || 1;
-    // advance until next > today (strictly greater)
-    while (next <= today) {
-      next = addMonthsSafe(next, step);
-      // safety
-      if (next.getFullYear() > now.getFullYear() + 10) break;
-    }
-    return next;
-  }
+  const handleToggleStatus = (id) => {
+    setStatusMap((prev) => {
+      const current = prev && prev[id];
+      const next = current === "Activo" ? "Pendiente" : "Activo";
+      return { ...prev, [id]: next };
+    });
+  };
 
-  function formatDate(d) {
-    if (!d) return "-";
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
-  }
-
-  function monthsUntil(date) {
-    if (!date) return null;
-    const now = new Date();
-    const months = (date.getFullYear() - now.getFullYear()) * 12 + (date.getMonth() - now.getMonth());
-    return months;
-  }
-
-  function criticidadFromMonths(months) {
-    if (months === null || months === undefined) return "-";
-    if (months <= 1) return "Crítica";
-    if (months >= 2 && months <= 6) return "Alta";
-    if (months >= 7 && months <= 10) return "Media";
-    return "Baja";
-  }
-
-  // Derived lists with computed nextDue
+  // Datos derivados (con nextDue)
   const createdWithDue = reportesCreados.map((rep) => {
     const frecuencia = rep.frecuencia || "Mensual";
     const next = computeNextDue(rep.fechaInicio, frecuencia);
@@ -131,145 +160,157 @@ export default function Reports() {
   });
 
   const staticWithDue = reports.map((r, idx) => {
-  const parsed = parseDateString(r.due);
-  const id = r.id || r.name || r.nombreReporte || `static_${idx}`;
-  return { ...r, id, nextDue: parsed, source: "static" };
-});
+    const parsed = parseDateString(r.due);
+    const id = r.id || r.name || r.nombreReporte || `static_${idx}`;
+    return { ...r, id, nextDue: parsed, source: "static" };
+  });
 
-  const combined = [...staticWithDue, ...createdWithDue].filter((x) => x.nextDue != null);
+  const combined = [...staticWithDue, ...createdWithDue].filter(
+    (x) => x.nextDue != null
+  );
   combined.sort((a, b) => a.nextDue - b.nextDue);
   const soonest = combined.length ? combined[0] : null;
 
-  // normalize today to start of day for comparisons
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const [statusMap, setStatusMap] = React.useState(() => {
-  try {
-    const raw = localStorage.getItem('reportStatuses');
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) {
-    return {};
-  }
-});
-
-React.useEffect(() => {
-  try {
-    localStorage.setItem('reportStatuses', JSON.stringify(statusMap));
-  } catch (e) {
-    // ignore write errors
-  }
-}, [statusMap]);
-
-const handleToggleStatus = (id) => {
-  setStatusMap(prev => {
-    const current = prev && prev[id];
-    const next = current === 'Activo' ? 'Pendiente' : 'Activo';
-    return { ...prev, [id]: next };
-  });
-};
-
-  // Metrics
+  // Métricas
   const totalReports = combined.length;
-  // Count reports with manual status "Pendiente" OR those with default "Pendiente" status
+
   const countPending = combined.filter((r) => {
     const status = statusMap[r.id];
-    if (status !== undefined) return status === 'Pendiente';
-    // default: Pendiente if nextDue <= today
+    if (status !== undefined) return status === "Pendiente";
     return r.nextDue && r.nextDue <= todayStart;
   }).length;
-  // Count reports with manual status "Activo" OR those with default "Activo" status
+
   const countActive = combined.filter((r) => {
     const status = statusMap[r.id];
-    if (status !== undefined) return status === 'Activo';
-    // default: Activo if nextDue > today
+    if (status !== undefined) return status === "Activo";
     return r.nextDue && r.nextDue > todayStart;
   }).length;
-  // Count reports with manual status "Pendiente" AND nextDue < today (vencidos)
-  // OR those with default Pendiente status (nextDue <= today) where nextDue < today
+
   const countOverdue = combined.filter((r) => {
     if (r.nextDue && r.nextDue < todayStart) {
       const status = statusMap[r.id];
-      // If manually set to Activo, don't count as overdue
-      if (status === 'Activo') return false;
-      // Otherwise count as overdue (Pendiente status or default)
+      if (status === "Activo") return false;
       return true;
     }
     return false;
   }).length;
-  const percentOnTime = totalReports ? Math.round((countActive / totalReports) * 100) : 0;
 
-  // pre-filtered list used by UI (applies search, entity, frequency)
+  const percentOnTime = totalReports
+    ? Math.round((countActive / totalReports) * 100)
+    : 0;
+
+  // Lista filtrada para la tabla
   const combinedFiltered = combined.filter((x) => {
-    const matchesSearch = Object.values(x).join(" ").toLowerCase().includes(searchLower);
+    const matchesSearch = Object.values(x)
+      .join(" ")
+      .toLowerCase()
+      .includes(searchLower);
+
     const reportEntity = x.entity || x.entidadControl || "-";
-    const matchesEntity = selectedEntity === "Todas" || reportEntity === selectedEntity;
+    const matchesEntity =
+      selectedEntity === "Todas" || reportEntity === selectedEntity;
+
     const reportFreq = x.freq || x.frecuencia || "-";
-    const matchesFreq = selectedFrequency === "Todas" || reportFreq === selectedFrequency;
+    const matchesFreq =
+      selectedFrequency === "Todas" || reportFreq === selectedFrequency;
 
     return matchesSearch && matchesEntity && matchesFreq;
   });
 
-  // Guardar reportes en localStorage cada vez que cambien
-  React.useEffect(() => {
+  // Persistir reportes en localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     localStorage.setItem("reportesCreados", JSON.stringify(reportesCreados));
   }, [reportesCreados]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setNuevoReporte({ ...nuevoReporte, [name]: value });
+    setNuevoReporte((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleAgregarReporte = () => {
-    // Validaciones: campos obligatorios
-    if (!nuevoReporte.idReporte.trim() || !nuevoReporte.nombreReporte.trim() || !nuevoReporte.fechaInicio) {
-      alert('Complete los campos obligatorios: ID, Nombre y Fecha de inicio.');
+    if (
+      !nuevoReporte.idReporte.trim() ||
+      !nuevoReporte.nombreReporte.trim() ||
+      !nuevoReporte.fechaInicio
+    ) {
+      alert("Complete los campos obligatorios: ID, Nombre y Fecha de inicio.");
       return;
     }
 
-    // Validar nombres (solo letras y espacios)
     const nameRegex = /^[A-Za-zÀ-ÖØ-öø-ÿ\s]+$/;
-    if (nuevoReporte.responsableElaboracionName && !nameRegex.test(nuevoReporte.responsableElaboracionName)) {
-      alert('El nombre del responsable de elaboración debe contener solo letras y espacios.');
+    if (
+      nuevoReporte.responsableElaboracionName &&
+      !nameRegex.test(nuevoReporte.responsableElaboracionName)
+    ) {
+      alert(
+        "El nombre del responsable de elaboración debe contener solo letras y espacios."
+      );
       return;
     }
-    if (nuevoReporte.responsableSupervisionName && !nameRegex.test(nuevoReporte.responsableSupervisionName)) {
-      alert('El nombre del responsable de supervisión debe contener solo letras y espacios.');
+    if (
+      nuevoReporte.responsableSupervisionName &&
+      !nameRegex.test(nuevoReporte.responsableSupervisionName)
+    ) {
+      alert(
+        "El nombre del responsable de supervisión debe contener solo letras y espacios."
+      );
       return;
     }
 
-    // Validar CC (solo números)
     const ccRegex = /^\d*$/;
-    if (nuevoReporte.responsableElaboracionCC && !ccRegex.test(nuevoReporte.responsableElaboracionCC)) {
-      alert('La cédula/CC del responsable de elaboración debe contener solo números.');
+    if (
+      nuevoReporte.responsableElaboracionCC &&
+      !ccRegex.test(nuevoReporte.responsableElaboracionCC)
+    ) {
+      alert(
+        "La cédula/CC del responsable de elaboración debe contener solo números."
+      );
       return;
     }
-    if (nuevoReporte.responsableSupervisionCC && !ccRegex.test(nuevoReporte.responsableSupervisionCC)) {
-      alert('La cédula/CC del responsable de supervisión debe contener solo números.');
+    if (
+      nuevoReporte.responsableSupervisionCC &&
+      !ccRegex.test(nuevoReporte.responsableSupervisionCC)
+    ) {
+      alert(
+        "La cédula/CC del responsable de supervisión debe contener solo números."
+      );
       return;
     }
 
-    // Validar correos (lista separada por comas)
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (nuevoReporte.correosNotificacion && nuevoReporte.correosNotificacion.trim()) {
-      const emails = nuevoReporte.correosNotificacion.split(',').map(s => s.trim()).filter(Boolean);
-      const invalid = emails.find(e => !emailRegex.test(e));
+    if (
+      nuevoReporte.correosNotificacion &&
+      nuevoReporte.correosNotificacion.trim()
+    ) {
+      const emails = nuevoReporte.correosNotificacion
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const invalid = emails.find((e) => !emailRegex.test(e));
       if (invalid) {
-        alert('La lista de correos contiene una dirección inválida: ' + invalid);
+        alert(
+          "La lista de correos contiene una dirección inválida: " + invalid
+        );
         return;
       }
     }
 
-    const newRep = { ...nuevoReporte, id: Date.now(), source: "created" };
-    // compute nextDue to store for faster access
+    const newRep = {
+      ...nuevoReporte,
+      id: Date.now(),
+      source: "created",
+    };
     newRep.nextDue = computeNextDue(newRep.fechaInicio, newRep.frecuencia);
-    setReportesCreados([...reportesCreados, newRep]);
+
+    setReportesCreados((prev) => [...prev, newRep]);
+
     setNuevoReporte({
       idReporte: "",
       nombreReporte: "",
       entidadControl: "",
       baseLegal: "",
       fechaInicio: "",
-      // reset responsables fields
       responsableElaboracionName: "",
       responsableElaboracionCC: "",
       responsableSupervisionName: "",
@@ -282,35 +323,46 @@ const handleToggleStatus = (id) => {
   };
 
   const handleEliminarReporte = (id) => {
-    setReportesCreados(reportesCreados.filter(rep => rep.id !== id));
+    setReportesCreados((prev) => prev.filter((rep) => rep.id !== id));
   };
 
   const generatePDF = async (reportId) => {
     if (!reportId) return;
-    
-    // Find the report
-    const report = combined.find(r => r.id === reportId);
+
+    const report = combined.find((r) => r.id === reportId);
     if (!report) return;
-    
+
     const name = report.name || report.nombreReporte;
     const entity = report.entity || report.entidadControl || "-";
     const freq = report.freq || report.frecuencia || "-";
-    const due = report.nextDue instanceof Date ? formatDate(report.nextDue) : (report.nextDue ? formatDate(parseDateString(report.nextDue)) : "-");
+    const due =
+      report.nextDue instanceof Date
+        ? formatDate(report.nextDue)
+        : report.nextDue
+        ? formatDate(parseDateString(report.nextDue))
+        : "-";
     const months = monthsUntil(report.nextDue);
     const criticidad = criticidadFromMonths(months);
-    const responsableElab = report.responsableElaboracionName ? `${report.responsableElaboracionName} (${report.responsableElaboracionCC || "-"})` : "-";
-    const responsableSup = report.responsableSupervisionName ? `${report.responsableSupervisionName} (${report.responsableSupervisionCC || "-"})` : "-";
-    
-    // Create a temporary container for the PDF content
-    const container = document.createElement('div');
-    container.style.padding = '20px';
-    container.style.backgroundColor = 'white';
-    container.style.position = 'absolute';
-    container.style.left = '-9999px';
-    container.style.width = '800px';
-    container.style.fontFamily = 'Arial, sans-serif';
-    container.style.fontSize = '12px';
-    
+    const responsableElab = report.responsableElaboracionName
+      ? `${report.responsableElaboracionName} (${
+          report.responsableElaboracionCC || "-"
+        })`
+      : "-";
+    const responsableSup = report.responsableSupervisionName
+      ? `${report.responsableSupervisionName} (${
+          report.responsableSupervisionCC || "-"
+        })`
+      : "-";
+
+    const container = document.createElement("div");
+    container.style.padding = "20px";
+    container.style.backgroundColor = "white";
+    container.style.position = "absolute";
+    container.style.left = "-9999px";
+    container.style.width = "800px";
+    container.style.fontFamily = "Arial, sans-serif";
+    container.style.fontSize = "12px";
+
     container.innerHTML = `
       <div style="text-align: center; margin-bottom: 30px;">
         <h1 style="margin: 0; font-size: 24px; color: #1f2937;">Reporte Detallado</h1>
@@ -345,43 +397,58 @@ const handleToggleStatus = (id) => {
           <td style="border: 1px solid #d1d5db; padding: 12px; font-weight: bold;">Responsable (Supervisión):</td>
           <td style="border: 1px solid #d1d5db; padding: 12px;">${responsableSup}</td>
         </tr>
-        ${report.baseLegal ? `<tr>
+        ${
+          report.baseLegal
+            ? `<tr>
           <td style="border: 1px solid #d1d5db; padding: 12px; font-weight: bold;">Base Legal:</td>
           <td style="border: 1px solid #d1d5db; padding: 12px;">${report.baseLegal}</td>
-        </tr>` : ''}
-        ${report.telefonoResponsable ? `<tr style="background-color: #f3f4f6;">
+        </tr>`
+            : ""
+        }
+        ${
+          report.telefonoResponsable
+            ? `<tr style="background-color: #f3f4f6;">
           <td style="border: 1px solid #d1d5db; padding: 12px; font-weight: bold;">Teléfono:</td>
           <td style="border: 1px solid #d1d5db; padding: 12px;">${report.telefonoResponsable}</td>
-        </tr>` : ''}
-        ${report.correosNotificacion ? `<tr>
+        </tr>`
+            : ""
+        }
+        ${
+          report.correosNotificacion
+            ? `<tr>
           <td style="border: 1px solid #d1d5db; padding: 12px; font-weight: bold;">Correos de Notificación:</td>
           <td style="border: 1px solid #d1d5db; padding: 12px;">${report.correosNotificacion}</td>
-        </tr>` : ''}
-        ${report.fechaInicio ? `<tr style="background-color: #f3f4f6;">
+        </tr>`
+            : ""
+        }
+        ${
+          report.fechaInicio
+            ? `<tr style="background-color: #f3f4f6;">
           <td style="border: 1px solid #d1d5db; padding: 12px; font-weight: bold;">Fecha de Inicio:</td>
           <td style="border: 1px solid #d1d5db; padding: 12px;">${report.fechaInicio}</td>
-        </tr>` : ''}
+        </tr>`
+            : ""
+        }
       </table>
     `;
-    
+
     document.body.appendChild(container);
-    
+
     try {
       const canvas = await html2canvas(container, {
         scale: 2,
         useCORS: true,
-        backgroundColor: '#ffffff',
+        backgroundColor: "#ffffff",
       });
-      
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgData = canvas.toDataURL('image/png');
+
+      const pdf = new jsPDF("p", "mm", "a4");
+      const imgData = canvas.toDataURL("image/png");
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pdfWidth - 20; // margins
+      const imgWidth = pdfWidth - 20;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      
-      pdf.addImage(imgData, 'PNG', 10, 10, imgWidth, imgHeight);
-      pdf.save(`reporte_${name.replace(/\s+/g, '_')}.pdf`);
+
+      pdf.addImage(imgData, "PNG", 10, 10, imgWidth, imgHeight);
+      pdf.save(`reporte_${name.replace(/\s+/g, "_")}.pdf`);
     } finally {
       document.body.removeChild(container);
     }
@@ -421,8 +488,14 @@ const handleToggleStatus = (id) => {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap gap-3 text-xs">
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Entidad</span>
-              <select value={selectedEntity} onChange={(e) => setSelectedEntity(e.target.value)} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50 cursor-pointer">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                Entidad
+              </span>
+              <select
+                value={selectedEntity}
+                onChange={(e) => setSelectedEntity(e.target.value)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
                 <option value="Todas">Todas</option>
                 <option value="SUI">SUI</option>
                 <option value="Superservicios">Superservicios</option>
@@ -430,8 +503,14 @@ const handleToggleStatus = (id) => {
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Frecuencia</span>
-              <select value={selectedFrequency} onChange={(e) => setSelectedFrequency(e.target.value)} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50 cursor-pointer">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                Frecuencia
+              </span>
+              <select
+                value={selectedFrequency}
+                onChange={(e) => setSelectedFrequency(e.target.value)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
                 <option value="Todas">Todas</option>
                 <option value="Mensual">Mensual</option>
                 <option value="Trimestral">Trimestral</option>
@@ -454,15 +533,15 @@ const handleToggleStatus = (id) => {
                 🔍
               </span>
             </div>
-            <button 
+            <button
               onClick={() => setShowModal(true)}
-              className="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 h-9 text-xs font-medium text-white hover:bg-slate-800">
+              className="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 h-9 text-xs font-medium text-white hover:bg-slate-800"
+            >
               + Nuevo reporte
             </button>
           </div>
         </div>
 
-        {/* Sección de vista: sólo texto explicativo (sin toggle superior) */}
         <div className="flex items-center justify-between text-[11px]">
           <div />
           <span className="text-slate-500 hidden md:inline">
@@ -473,13 +552,21 @@ const handleToggleStatus = (id) => {
 
       {/* Modal para nuevo reporte */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-96 overflow-y-auto">
+  <div
+    className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    onClick={() => setShowModal(false)}        // click fuera = cerrar
+  >
+    <div
+      className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-96 overflow-y-auto"
+      onClick={(e) => e.stopPropagation()}     // click dentro NO cierra
+    >
             <h2 className="text-lg font-bold mb-4">Crear Nuevo Reporte</h2>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-1">ID Reporte *</label>
+                <label className="block text-sm font-medium mb-1">
+                  ID Reporte *
+                </label>
                 <input
                   type="text"
                   name="idReporte"
@@ -491,7 +578,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Nombre del Reporte *</label>
+                <label className="block text-sm font-medium mb-1">
+                  Nombre del Reporte *
+                </label>
                 <input
                   type="text"
                   name="nombreReporte"
@@ -503,7 +592,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div className="col-span-2">
-                <label className="block text-sm font-medium mb-1">Entidad de Control</label>
+                <label className="block text-sm font-medium mb-1">
+                  Entidad de Control
+                </label>
                 <input
                   type="text"
                   name="entidadControl"
@@ -515,7 +606,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div className="col-span-2">
-                <label className="block text-sm font-medium mb-1">Base Legal</label>
+                <label className="block text-sm font-medium mb-1">
+                  Base Legal
+                </label>
                 <textarea
                   name="baseLegal"
                   value={nuevoReporte.baseLegal}
@@ -525,9 +618,10 @@ const handleToggleStatus = (id) => {
                 />
               </div>
 
-              {/* Responsables: nombre y CC por separado */}
               <div>
-                <label className="block text-sm font-medium mb-1">Responsable elaboración - Nombre</label>
+                <label className="block text-sm font-medium mb-1">
+                  Responsable elaboración - Nombre
+                </label>
                 <input
                   type="text"
                   name="responsableElaboracionName"
@@ -539,7 +633,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Responsable elaboración - CC</label>
+                <label className="block text-sm font-medium mb-1">
+                  Responsable elaboración - CC
+                </label>
                 <input
                   type="text"
                   name="responsableElaboracionCC"
@@ -551,7 +647,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Responsable supervisión - Nombre</label>
+                <label className="block text-sm font-medium mb-1">
+                  Responsable supervisión - Nombre
+                </label>
                 <input
                   type="text"
                   name="responsableSupervisionName"
@@ -563,7 +661,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Responsable supervisión - CC</label>
+                <label className="block text-sm font-medium mb-1">
+                  Responsable supervisión - CC
+                </label>
                 <input
                   type="text"
                   name="responsableSupervisionCC"
@@ -575,7 +675,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Teléfono del responsable</label>
+                <label className="block text-sm font-medium mb-1">
+                  Teléfono del responsable
+                </label>
                 <input
                   type="tel"
                   name="telefonoResponsable"
@@ -587,7 +689,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div className="col-span-2">
-                <label className="block text-sm font-medium mb-1">Correos de Notificación</label>
+                <label className="block text-sm font-medium mb-1">
+                  Correos de Notificación
+                </label>
                 <textarea
                   name="correosNotificacion"
                   value={nuevoReporte.correosNotificacion}
@@ -598,7 +702,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Fecha de Inicio Vigencia</label>
+                <label className="block text-sm font-medium mb-1">
+                  Fecha de Inicio Vigencia
+                </label>
                 <input
                   type="date"
                   name="fechaInicio"
@@ -609,7 +715,9 @@ const handleToggleStatus = (id) => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1">Frecuencia</label>
+                <label className="block text-sm font-medium mb-1">
+                  Frecuencia
+                </label>
                 <select
                   name="frecuencia"
                   value={nuevoReporte.frecuencia}
@@ -642,10 +750,11 @@ const handleToggleStatus = (id) => {
         </div>
       )}
 
-
-
       {/* Tabla de reportes */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden" ref={reportesRef}>
+      <div
+        className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
+        ref={reportesRef}
+      >
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">
@@ -657,7 +766,9 @@ const handleToggleStatus = (id) => {
             </p>
           </div>
           <div className="flex flex-col items-end gap-1 text-[11px] text-slate-500">
-            <span className="hidden sm:inline">{combinedFiltered.length} registros encontrados</span>
+            <span className="hidden sm:inline">
+              {combinedFiltered.length} registros encontrados
+            </span>
             <LegendPills />
           </div>
         </div>
@@ -676,79 +787,183 @@ const handleToggleStatus = (id) => {
               <th className="py-2 pr-4 text-center font-medium">Acciones</th>
             </tr>
           </thead>
-            <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100">
             {combinedFiltered.map((r) => {
-                const isSoonest = soonest && ((soonest.id && r.id && soonest.id === r.id) || (soonest.name && r.name && soonest.name === r.name));
-                const name = r.name || r.nombreReporte;
-                const entity = r.entity || r.entidadControl || "-";
-                const freq = r.freq || r.frecuencia || "-";
-                const due = r.nextDue instanceof Date ? formatDate(r.nextDue) : (r.nextDue ? formatDate(parseDateString(r.nextDue)) : "-");
-                const months = monthsUntil(r.nextDue);
-                const criticidad = criticidadFromMonths(months);
-                const responsableElab = r.responsableElaboracionName ? `${r.responsableElaboracionName} (${r.responsableElaboracionCC || "-"})` : "-";
-                const responsableSup = r.responsableSupervisionName ? `${r.responsableSupervisionName} (${r.responsableSupervisionCC || "-"})` : "-";
-                
-                const criticClass = {
-                  "Crítica": "bg-red-100 text-red-800",
-                  "Alta": "bg-amber-100 text-amber-800",
-                  "Media": "bg-sky-100 text-sky-800",
-                  "Baja": "bg-emerald-100 text-emerald-800",
-                  "-": "bg-slate-100 text-slate-700"
+              const isSoonest =
+                soonest &&
+                ((soonest.id && r.id && soonest.id === r.id) ||
+                  (soonest.name && r.name && soonest.name === r.name));
+
+              const name = r.name || r.nombreReporte;
+              const entity = r.entity || r.entidadControl || "-";
+              const freq = r.freq || r.frecuencia || "-";
+              const due =
+                r.nextDue instanceof Date
+                  ? formatDate(r.nextDue)
+                  : r.nextDue
+                  ? formatDate(parseDateString(r.nextDue))
+                  : "-";
+              const months = monthsUntil(r.nextDue);
+              const criticidad = criticidadFromMonths(months);
+              const responsableElab = r.responsableElaboracionName
+                ? `${r.responsableElaboracionName} (${
+                    r.responsableElaboracionCC || "-"
+                  })`
+                : "-";
+              const responsableSup = r.responsableSupervisionName
+                ? `${r.responsableSupervisionName} (${
+                    r.responsableSupervisionCC || "-"
+                  })`
+                : "-";
+
+              const defaultLabel =
+                r.nextDue && r.nextDue > todayStart ? "Activo" : "Pendiente";
+              const statusLabel = statusMap[r.id] || defaultLabel;
+              const statusClass =
+                statusLabel === "Activo"
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-amber-100 text-amber-800";
+
+              const criticClass =
+                {
+                  Crítica: "bg-red-100 text-red-800",
+                  Alta: "bg-amber-100 text-amber-800",
+                  Media: "bg-sky-100 text-sky-800",
+                  Baja: "bg-emerald-100 text-emerald-800",
+                  "-": "bg-slate-100 text-slate-700",
                 }[criticidad] || "bg-slate-100 text-slate-700";
 
-                return (
-                  <React.Fragment key={r.id || name}>
-                    <tr className={isSoonest ? "bg-amber-50" : undefined}>
-                      <td className="py-2 pl-4 pr-2 align-top">
-                        <p className="font-medium text-[11px] text-slate-900">{name}{isSoonest && <span className="ml-2 inline-block text-[10px] py-0.5 px-2 rounded bg-amber-200 text-amber-800">Próximo</span>}</p>
-                      </td>
-                      <td className="py-2 pr-2 align-top text-[11px]">{entity}</td>
-                      <td className="py-2 pr-2 align-top text-[11px]">{freq}</td>
-                      <td className="py-2 pr-2 align-top text-[11px]">{responsableElab}</td>
-                      <td className="py-2 pr-2 align-top text-[11px]">{responsableSup}</td>
-                      <td className="py-2 pr-2 align-top text-[11px]">{due}</td>
-                      <td className="py-2 pr-2 align-top text-center"><span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-medium ${criticClass}`}>{criticidad}</span></td>
-                      <td className="py-2 pr-2 align-top text-center">
-                        {/* Estado: Activo | Pendiente (clic para alternar) */}
-                        {(() => {
-                          const defaultLabel = (r.nextDue && r.nextDue > todayStart) ? 'Activo' : 'Pendiente';
-                          const statusLabel = statusMap[r.id] || defaultLabel;
-                          const statusClass = statusLabel === 'Activo' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800';
-                          return (
-                            <button
-                              onClick={() => handleToggleStatus(r.id)}
-                              title="Cambiar estado (Activo / Pendiente)"
-                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-medium ${statusClass}`}
-                            >
-                              {statusLabel}
-                            </button>
-                          );
-                        })()}
-                      </td>
-                      <td className="py-2 pr-4 align-top text-center">
-                        <div className="inline-flex gap-1 flex-wrap justify-center">
-                          <button onClick={() => toggleExpand(r.id)} className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50">Detalles</button>
-                          <button onClick={() => generatePDF(r.id)} className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50" title="Descargar PDF">📥</button>
-                          {r.source === "created" && <button onClick={() => handleEliminarReporte(r.id)} className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50 no-export">Eliminar</button>}
+              return (
+                <React.Fragment key={r.id || name}>
+                  <tr className={isSoonest ? "bg-amber-50" : undefined}>
+                    <td className="py-2 pl-4 pr-2 align-top">
+                      <p className="font-medium text-[11px] text-slate-900">
+                        {name}
+                        {isSoonest && (
+                          <span className="ml-2 inline-block text-[10px] py-0.5 px-2 rounded bg-amber-200 text-amber-800">
+                            Próximo
+                          </span>
+                        )}
+                      </p>
+                    </td>
+                    <td className="py-2 pr-2 align-top text-[11px]">
+                      {entity}
+                    </td>
+                    <td className="py-2 pr-2 align-top text-[11px]">
+                      {freq}
+                    </td>
+                    <td className="py-2 pr-2 align-top text-[11px]">
+                      {responsableElab}
+                    </td>
+                    <td className="py-2 pr-2 align-top text-[11px]">
+                      {responsableSup}
+                    </td>
+                    <td className="py-2 pr-2 align-top text-[11px]">
+                      {due}
+                    </td>
+                    <td className="py-2 pr-2 align-top text-center">
+                      <span
+                        className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-medium ${criticClass}`}
+                      >
+                        {criticidad}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-2 align-top text-center">
+                      <button
+                        onClick={() => handleToggleStatus(r.id)}
+                        title="Cambiar estado (Activo / Pendiente)"
+                        className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-medium ${statusClass}`}
+                      >
+                        {statusLabel}
+                      </button>
+                    </td>
+                    <td className="py-2 pr-4 align-top text-center">
+                      <div className="inline-flex gap-1 flex-wrap justify-center">
+                        <button
+                          onClick={() => toggleExpand(r.id)}
+                          className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50"
+                        >
+                          Detalles
+                        </button>
+                        <button
+                          onClick={() => generatePDF(r.id)}
+                          className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50"
+                          title="Descargar PDF"
+                        >
+                          📥
+                        </button>
+                        {r.source === "created" && (
+                          <button
+                            onClick={() => handleEliminarReporte(r.id)}
+                            className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50 no-export"
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedIds.includes(r.id) && (
+                    <tr className="bg-slate-50">
+                      <td colSpan="9" className="py-4 px-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          {r.idReporte && (
+                            <div>
+                              <span className="font-medium text-[11px] text-slate-600">
+                                ID Reporte:
+                              </span>{" "}
+                              <span className="text-[11px]">
+                                {r.idReporte}
+                              </span>
+                            </div>
+                          )}
+                          {r.baseLegal && (
+                            <div>
+                              <span className="font-medium text-[11px] text-slate-600">
+                                Base Legal:
+                              </span>{" "}
+                              <span className="text-[11px]">
+                                {r.baseLegal}
+                              </span>
+                            </div>
+                          )}
+                          {r.telefonoResponsable && (
+                            <div>
+                              <span className="font-medium text-[11px] text-slate-600">
+                                Teléfono:
+                              </span>{" "}
+                              <span className="text-[11px]">
+                                {r.telefonoResponsable}
+                              </span>
+                            </div>
+                          )}
+                          {r.correosNotificacion && (
+                            <div>
+                              <span className="font-medium text-[11px] text-slate-600">
+                                Correos de Notificación:
+                              </span>{" "}
+                              <span className="text-[11px]">
+                                {r.correosNotificacion}
+                              </span>
+                            </div>
+                          )}
+                          {r.fechaInicio && (
+                            <div>
+                              <span className="font-medium text-[11px] text-slate-600">
+                                Fecha de Inicio:
+                              </span>{" "}
+                              <span className="text-[11px]">
+                                {r.fechaInicio}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
-                    {expandedIds.includes(r.id) && (
-                      <tr className="bg-slate-50">
-                        <td colSpan="9" className="py-4 px-4">
-                          <div className="grid grid-cols-2 gap-4">
-                            {r.idReporte && <div><span className="font-medium text-[11px] text-slate-600">ID Reporte:</span> <span className="text-[11px]">{r.idReporte}</span></div>}
-                            {r.baseLegal && <div><span className="font-medium text-[11px] text-slate-600">Base Legal:</span> <span className="text-[11px]">{r.baseLegal}</span></div>}
-                            {r.telefonoResponsable && <div><span className="font-medium text-[11px] text-slate-600">Teléfono:</span> <span className="text-[11px]">{r.telefonoResponsable}</span></div>}
-                            {r.correosNotificacion && <div><span className="font-medium text-[11px] text-slate-600">Correos de Notificación:</span> <span className="text-[11px]">{r.correosNotificacion}</span></div>}
-                            {r.fechaInicio && <div><span className="font-medium text-[11px] text-slate-600">Fecha de Inicio:</span> <span className="text-[11px]">{r.fechaInicio}</span></div>}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
 
@@ -772,7 +987,7 @@ const handleToggleStatus = (id) => {
   );
 }
 
-/* Components */
+/* --------- Components auxiliares --------- */
 
 function MetricCard({ label, value, helper, tone = "neutral" }) {
   const tones = {
@@ -804,22 +1019,6 @@ function MetricCard({ label, value, helper, tone = "neutral" }) {
   );
 }
 
-function Select({ label, value }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-        {label}
-      </span>
-      <button className="inline-flex items-center justify-between gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50">
-        <span>{value}</span>
-        <span className="text-xs text-slate-400">▾</span>
-      </button>
-    </div>
-  );
-}
-
-// TabButton removed — header toggle moved to per-row Estado only
-
 function LegendPills() {
   return (
     <div className="flex items-center gap-2">
@@ -836,103 +1035,5 @@ function LegendDot({ className, label }) {
       <span className={`h-2 w-2 rounded-full ${className}`} />
       <span>{label}</span>
     </span>
-  );
-}
-
-function EntityPill({ entity }) {
-  const map = {
-    SUI: "bg-sky-50 text-sky-800 border-sky-100",
-    Superservicios: "bg-amber-50 text-amber-800 border-amber-100",
-    ANH: "bg-emerald-50 text-emerald-800 border-emerald-100",
-  };
-
-  const cls =
-    map[entity] || "bg-slate-50 text-slate-700 border-slate-100";
-
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}
-    >
-      {entity}
-    </span>
-  );
-}
-
-function RiskPill({ risk }) {
-  const map = {
-    Crítica: "bg-red-100 text-red-800",
-    Alta: "bg-amber-100 text-amber-800",
-    Media: "bg-sky-100 text-sky-800",
-    Baja: "bg-emerald-100 text-emerald-800",
-  };
-
-  const cls = map[risk] || "bg-slate-100 text-slate-700";
-
-  return (
-    <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}
-    >
-      {risk}
-    </span>
-  );
-}
-
-function ReportRow({
-  name,
-  entity,
-  freq,
-  owner,
-  due,
-  status,
-  statusTone,
-  risk,
-}) {
-  const statusColors = {
-    warning: "bg-amber-100 text-amber-800",
-    danger: "bg-red-100 text-red-800",
-    info: "bg-sky-100 text-sky-800",
-    success: "bg-emerald-100 text-emerald-800",
-  };
-
-  return (
-    <tr className="text-slate-700 hover:bg-slate-50/80 transition">
-      <td className="py-2.5 pl-4 pr-2 align-top">
-        <p className="font-medium text-[11px] text-slate-900">{name}</p>
-      </td>
-      <td className="py-2.5 pr-2 align-top text-[11px]">
-        <EntityPill entity={entity} />
-      </td>
-      <td className="py-2.5 pr-2 align-top text-[11px] text-slate-600">
-        {freq}
-      </td>
-      <td className="py-2.5 pr-2 align-top text-[11px] text-slate-600">
-        {owner}
-      </td>
-      <td className="py-2.5 pr-2 align-top text-[11px] text-slate-600">
-        {due}
-      </td>
-      <td className="py-2.5 pr-2 align-top text-center">
-        <RiskPill risk={risk} />
-      </td>
-      <td className="py-2.5 pr-2 align-top text-center">
-        <span
-          className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-medium ${
-            statusColors[statusTone] || statusColors.info
-          }`}
-        >
-          {status}
-        </span>
-      </td>
-      <td className="py-2.5 pr-4 align-top text-center">
-        <div className="inline-flex gap-1">
-          <button className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50">
-            Detalle
-          </button>
-          <button className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50">
-            Historial
-          </button>
-        </div>
-      </td>
-    </tr>
   );
 }

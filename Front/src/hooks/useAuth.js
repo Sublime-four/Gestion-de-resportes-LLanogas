@@ -1,23 +1,44 @@
 // src/hooks/useAuth.js
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import {
+  getStoredUser,
+  saveUser,
+  clearUser,
+  isLoggedIn,
+} from "../store/authStore";
 
 /**
- * Hook de autenticación muy básico.
- * Ahora mismo siempre marca al usuario como autenticado.
- * Luego puedes reemplazarlo por lógica real (token, API, etc).
+ * Hook de autenticación sencillo basado en localStorage.
+ * - login(user)  -> guarda usuario y marca autenticado
+ * - logout()     -> limpia sesión
+ * - isAuthenticated, user
  */
 export default function useAuth() {
-  const [isAuthenticated, setIsAuthenticated] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => isLoggedIn());
+  const [user, setUser] = useState(() => getStoredUser());
 
-  // Aquí podrías leer localStorage, llamar una API, etc.
   useEffect(() => {
-    // Ejemplo futuro:
-    // const token = localStorage.getItem("token");
-    // setIsAuthenticated(!!token);
-    setIsAuthenticated(true);
+    // por si en el futuro quieres leer token al cargar
+    setIsAuthenticated(isLoggedIn());
+    setUser(getStoredUser());
   }, []);
+
+  const login = (userData) => {
+    saveUser(userData);
+    setUser(userData);
+    setIsAuthenticated(true);
+  };
+
+  const logout = () => {
+    clearUser();
+    setUser(null);
+    setIsAuthenticated(false);
+  };
 
   return {
     isAuthenticated,
+    user,
+    login,
+    logout,
   };
 }
