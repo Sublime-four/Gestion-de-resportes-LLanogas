@@ -1,12 +1,14 @@
-// src/layouts/MainLayout.jsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import logoLlanogas from "../assets/logo-llanogas.png";
 import useAuth from "../hooks/useAuth";
+import { generateAlertsFromReports } from "../utils/notifications";
 
 const mainNav = [
   { to: "/dashboard", icon: "📊", label: "Dashboard" },
+  { to: "/my-tasks", icon: "📋", label: "Mis tareas pendientes" },
   { to: "/reports", icon: "📁", label: "Reportes" },
+  { to: "/entities", icon: "🏛️", label: "Entidades de control" },
   { to: "/calendar", icon: "📅", label: "Calendario" },
   { to: "/compliance", icon: "✅", label: "Cumplimiento" },
   { to: "/locations-map", icon: "🗺️", label: "Mapa de localizaciones" },
@@ -17,7 +19,6 @@ const adminNav = [
   { to: "/settings", icon: "⚙️", label: "Configuración" },
 ];
 
-// nombres de meses para mostrar el label
 const MONTH_NAMES = [
   "Ene",
   "Feb",
@@ -56,7 +57,7 @@ export default function MainLayout({ title, subtitle, children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // ---- estado de período global (mes / año) ----
+  // ---------- período global ----------
   const [period, setPeriod] = useState(() => {
     const now = new Date();
     return { month: now.getMonth(), year: now.getFullYear() };
@@ -77,7 +78,6 @@ export default function MainLayout({ title, subtitle, children }) {
       }
       return { month, year };
     });
-    // aquí luego puedes disparar un fetch global por período
   };
 
   const handleNextPeriod = () => {
@@ -90,31 +90,101 @@ export default function MainLayout({ title, subtitle, children }) {
       }
       return { month, year };
     });
-    // idem: fetch de datos por nuevo período
   };
 
-  // ---- notificaciones (placeholder backend-ready) ----
+  // ---------- notificaciones basadas en reportes ----------
   const [showNotifications, setShowNotifications] = useState(false);
-  const notifications = []; // reemplaza por datos del backend
+
+  const [notifications, setNotifications] = useState(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem("notifications");
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const displayName = user?.name || "Usuario";
-  const displayRole = user?.role || "Perfil no asignado";
+  // Cargar alertas a partir de los reportes guardados en localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const rawReports = localStorage.getItem("reportesCreados");
+      const reports = rawReports ? JSON.parse(rawReports) : [];
+
+      const generated = generateAlertsFromReports(reports);
+
+      setNotifications((prev) => {
+        const readMap = Object.fromEntries(prev.map((n) => [n.id, n.read]));
+        return generated.map((a) => ({
+          ...a,
+          read: readMap[a.id] ?? a.read ?? false,
+        }));
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Persistir notificaciones (incluye flag read)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem("notifications", JSON.stringify(notifications));
+    } catch {
+      // ignore
+    }
+  }, [notifications]);
+
+  const handleMarkAllRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  };
+
+  const handleNotificationClick = (id) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+    );
+  };
+
+  // ---------- usuario / avatar ----------
+  const displayName = user?.email || "usuario@llanogas.com";
+  const displayRole = user?.role || "";
 
   const initials = useMemo(() => {
-    if (!user?.name) return "US";
-    const parts = user.name.split(" ").filter(Boolean);
-    if (!parts.length) return "US";
+    const base = (user?.name && user.name.trim()) || user?.email || "";
+    if (!base) return "US";
+    const cleaned = base.includes("@") ? base.split("@")[0] : base;
+    const parts = cleaned.split(/[.\s_]+/).filter(Boolean);
+    if (!parts.length) return cleaned.charAt(0).toUpperCase();
     if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
     return (
       parts[0].charAt(0).toUpperCase() +
       parts[parts.length - 1].charAt(0).toUpperCase()
     );
-  }, [user?.name]);
+  }, [user?.name, user?.email]);
 
   const handleLogout = () => {
     logout?.();
     navigate("/login", { replace: true });
+  };
+
+  // Colores por tipo de alerta
+  const alertTypeClass = (type) => {
+    switch (type) {
+      case "Verde":
+        return "border-emerald-100 bg-emerald-50/80";
+      case "Amarilla":
+        return "border-amber-100 bg-amber-50/80";
+      case "Naranja":
+        return "border-orange-100 bg-orange-50/80";
+      case "Roja":
+        return "border-red-100 bg-red-50/80";
+      default:
+        return "border-slate-100 bg-white";
+    }
   };
 
   return (
@@ -161,6 +231,7 @@ export default function MainLayout({ title, subtitle, children }) {
           </div>
         </nav>
 
+        {/* Footer sidebar con usuario */}
         <div className="px-5 py-4 border-t border-slate-800 bg-slate-950/90">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-full bg-slate-800 flex items-center justify-center text-xs font-semibold">
@@ -168,9 +239,11 @@ export default function MainLayout({ title, subtitle, children }) {
             </div>
             <div className="flex-1">
               <p className="text-xs font-semibold truncate">{displayName}</p>
-              <p className="text-[11px] text-slate-400 truncate">
-                {displayRole}
-              </p>
+              {displayRole && (
+                <p className="text-[11px] text-slate-400 truncate">
+                  {displayRole}
+                </p>
+              )}
             </div>
             <button
               onClick={handleLogout}
@@ -185,7 +258,7 @@ export default function MainLayout({ title, subtitle, children }) {
       {/* Main content */}
       <main className="flex-1 flex flex-col">
         {/* Topbar */}
-        <header className="h-16 bg-white/80 backdrop-blur border-b border-slate-200 px-6 flex items-center justify-between">
+        <header className="relative z-30 h-16 bg-white/80 backdrop-blur border-b border-slate-200 px-6 flex items-center justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500 mb-1">
               Tablero ejecutivo
@@ -197,7 +270,7 @@ export default function MainLayout({ title, subtitle, children }) {
           </div>
 
           <div className="flex items-center gap-4 relative">
-            {/* Selector de período: todos los meses con prev / next */}
+            {/* Selector de período */}
             <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white">
               <button
                 type="button"
@@ -237,14 +310,25 @@ export default function MainLayout({ title, subtitle, children }) {
               </button>
 
               {showNotifications && (
-                <div className="absolute right-0 mt-2 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl text-[11px] z-20">
+                <div className="absolute right-0 mt-2 w-80 rounded-2xl border border-slate-200 bg-white shadow-xl text-[11px] z-40">
                   <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
                     <span className="font-semibold text-slate-800">
                       Notificaciones
                     </span>
-                    <span className="text-slate-400">
-                      {unreadCount} nuevas
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">
+                        {unreadCount} nuevas
+                      </span>
+                      {notifications.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleMarkAllRead}
+                          className="text-[10px] text-sky-500 hover:text-sky-600"
+                        >
+                          Marcar todas leídas
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="max-h-64 overflow-y-auto">
                     {notifications.length === 0 ? (
@@ -255,22 +339,30 @@ export default function MainLayout({ title, subtitle, children }) {
                       </p>
                     ) : (
                       notifications.map((n) => (
-                        <div
+                        <button
                           key={n.id}
-                          className="px-3 py-2 border-b border-slate-50 last:border-b-0 hover:bg-slate-50"
+                          type="button"
+                          onClick={() => handleNotificationClick(n.id)}
+                          className={[
+                            "w-full text-left px-3 py-2 border-b border-slate-50 last:border-b-0 flex flex-col gap-0.5",
+                            alertTypeClass(n.type),
+                            n.read ? "opacity-70" : "opacity-100",
+                          ].join(" ")}
                         >
-                          <p className="font-medium text-slate-800">
-                            {n.title}
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-slate-900">
+                              {n.nombre}
+                            </span>
+                            <span className="text-[10px] text-slate-600">
+                              {n.type}
+                            </span>
+                          </div>
+                          <p className="text-slate-700">{n.message}</p>
+                          <p className="text-[10px] text-slate-500">
+                            Vence: {n.fechaVencimiento} · Responsable:{" "}
+                            {n.responsable}
                           </p>
-                          {n.body && (
-                            <p className="text-slate-500">{n.body}</p>
-                          )}
-                          {n.time && (
-                            <p className="text-[10px] text-slate-400 mt-0.5">
-                              {n.time}
-                            </p>
-                          )}
-                        </div>
+                        </button>
                       ))
                     )}
                   </div>
@@ -280,7 +372,7 @@ export default function MainLayout({ title, subtitle, children }) {
 
             <div className="h-8 w-px bg-slate-200" />
 
-            {/* Usuario */}
+            {/* Usuario en topbar */}
             <div className="flex items-center gap-2">
               <div className="h-9 w-9 rounded-full bg-slate-900 text-slate-100 flex items-center justify-center text-xs font-semibold">
                 {initials}
@@ -289,7 +381,9 @@ export default function MainLayout({ title, subtitle, children }) {
                 <p className="font-semibold text-slate-800 truncate">
                   {displayName}
                 </p>
-                <p className="text-slate-500 truncate">{displayRole}</p>
+                {displayRole && (
+                  <p className="text-slate-500 truncate">{displayRole}</p>
+                )}
               </div>
             </div>
           </div>

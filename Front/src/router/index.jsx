@@ -17,6 +17,8 @@ import Compliance from "../pages/Compliance";
 import Users from "../pages/Users";
 import ForgotPassword from "../pages/ForgotPassword";
 import LocationsMap from "../pages/LocationsMap";
+import Entities from "../pages/Entities";
+import MyTasks from "../pages/MyTasks";
 
 import AuthLayout from "../layouts/AuthLayout";
 import MainLayout from "../layouts/MainLayout";
@@ -121,19 +123,46 @@ export default function AppRouter() {
             </MainLayout>
           }
         />
-      </Route>
 
-      <Route
-  path="/locations-map"
-  element={
-    <MainLayout
-      title="Mapa de localizaciones"
-      subtitle="Visualización geográfica de activos y puntos de operación."
-    >
-      <LocationsMap />
-    </MainLayout>
-  }
-/>
+        {/* 🔹 NUEVA: Mis tareas pendientes */}
+        <Route
+          path="/my-tasks" // o "/mis-tareas" si lo prefieres en español
+          element={
+            <MainLayout
+              title="Mis tareas pendientes"
+              subtitle="Obligaciones de reporte asignadas a tu usuario."
+            >
+              <MyTasks />
+            </MainLayout>
+          }
+        />
+
+        {/* Mapa de localizaciones (protegido) */}
+        <Route
+          path="/locations-map"
+          element={
+            <MainLayout
+              title="Mapa de localizaciones"
+              subtitle="Visualización geográfica de activos y puntos de operación."
+            >
+              <LocationsMap />
+            </MainLayout>
+          }
+        />
+
+        {/* Entidades de control (protegido) */}
+        <Route
+          path="/entities"
+          element={
+            <MainLayout
+              title="Entidades de control"
+              subtitle="Catálogo centralizado de entidades reguladoras."
+            >
+              <Entities />
+            </MainLayout>
+          }
+        />
+      </Route>
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

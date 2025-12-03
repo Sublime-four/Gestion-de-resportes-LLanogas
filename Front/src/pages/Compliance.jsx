@@ -3,8 +3,18 @@ import React, { useMemo, useState } from "react";
 
 export default function Compliance() {
   // --- Datos que vendrán del backend ---
-  // TODO: reemplazar estos useState por un fetch/useQuery contra tu API
-  const [entities, setEntities] = useState([]); // [{ entidad, tiempo, pendientes, vencidos, riesgo, cumplimiento }]
+  // Cada entidad:
+  // {
+  //   entidad,
+  //   tiempo,               // reportes enviados a tiempo
+  //   pendientes,           // reportes aún en proceso / no enviados
+  //   vencidos,             // reportes vencidos
+  //   fueraDeTiempo?,       // reportes enviados fuera del tiempo
+  //   riesgo,               // Bajo / Medio / Alto / Crítico
+  //   cumplimiento,         // % de cumplimiento de esa entidad (0–100)
+  //   diasRetrasoPromedio?  // número
+  // }
+  const [entities, setEntities] = useState([]);
   const [riskSummary, setRiskSummary] = useState({
     critico: 0,
     alto: 0,
@@ -12,14 +22,18 @@ export default function Compliance() {
     bajo: 0,
     total: 0,
   });
-  const [executiveNotes, setExecutiveNotes] = useState([]); // ['nota 1', 'nota 2', ...]
+  const [executiveNotes, setExecutiveNotes] = useState([]);
+
+  // Histórico y responsables (para cuando el backend los mande)
+  const [complianceHistory, setComplianceHistory] = useState([]);
+  const [responsablesMetrics, setResponsablesMetrics] = useState([]);
 
   // --- Estado de filtros ---
   const [period, setPeriod] = useState("Periodo actual");
   const [entityFilter, setEntityFilter] = useState("Todas");
   const [riskFilter, setRiskFilter] = useState("Todos");
 
-  // Opciones dinámicas para entidades (según datos del backend)
+  // Opciones dinámicas para entidades
   const entityOptions = useMemo(() => {
     const base = ["Todas"];
     const uniques = Array.from(new Set(entities.map((e) => e.entidad)));
@@ -37,15 +51,17 @@ export default function Compliance() {
     });
   }, [entities, entityFilter, riskFilter]);
 
-  // --- Métricas calculadas a partir de TODAS las entidades (visión global) ---
+  // --- Métricas globales de cumplimiento ---
   const globalMetrics = useMemo(() => {
     if (!entities || entities.length === 0) {
       return {
         vencidos: 0,
         pendientes: 0,
+        enviadosATiempo: 0,
+        enviadosFueraTiempo: 0,
         cumplimientoYTD: "—",
-        entidadesActivas: 0,
         totalReportes: 0,
+        retrasoPromedioLabel: "—",
       };
     }
 
@@ -58,45 +74,65 @@ export default function Compliance() {
       0
     );
 
-    const cumplimientoValues = entities
-      .map((e) => {
-        if (typeof e.cumplimiento === "number") return e.cumplimiento;
-        if (typeof e.cumplimiento === "string") {
-          const n = parseInt(e.cumplimiento.replace("%", ""), 10);
-          return isNaN(n) ? null : n;
-        }
-        return null;
-      })
-      .filter((v) => v !== null);
+    const totalATiempo = entities.reduce(
+      (acc, e) => acc + (Number(e.tiempo) || 0),
+      0
+    );
 
-    const avgCumplimiento =
-      cumplimientoValues.length > 0
-        ? cumplimientoValues.reduce((a, b) => a + b, 0) /
-          cumplimientoValues.length
-        : null;
+    const totalFueraTiempo = entities.reduce(
+      (acc, e) => acc + (Number(e.fueraDeTiempo || 0)),
+      0
+    );
 
+    // Total de reportes (exactamente como define el documento)
     const totalReportes = entities.reduce((acc, e) => {
       const t = Number(e.tiempo) || 0;
       const p = Number(e.pendientes) || 0;
       const v = Number(e.vencidos) || 0;
-      return acc + t + p + v;
+      const f = Number(e.fueraDeTiempo || 0);
+      return acc + t + p + v + f;
     }, 0);
+
+    // % cumplimiento = (Total enviados a tiempo / Total reportes) × 100
+    const cumplimientoGlobal =
+      totalReportes > 0 ? Math.round((totalATiempo / totalReportes) * 100) : null;
+    const cumplimientoYTD =
+      cumplimientoGlobal !== null ? `${cumplimientoGlobal}%` : "—";
+
+    // Días de retraso promedio (promedio simple)
+    const retrasos = entities
+      .map((e) => {
+        const d =
+          typeof e.diasRetrasoPromedio === "number"
+            ? e.diasRetrasoPromedio
+            : Number(e.diasRetrasoPromedio);
+        return isNaN(d) ? null : d;
+      })
+      .filter((v) => v !== null);
+
+    const retrasoPromedio =
+      retrasos.length > 0
+        ? retrasos.reduce((a, b) => a + b, 0) / retrasos.length
+        : null;
+
+    const retrasoPromedioLabel =
+      retrasoPromedio !== null ? `${retrasoPromedio.toFixed(1)} días` : "—";
 
     return {
       vencidos: totalVencidos,
       pendientes: totalPendientes,
-      cumplimientoYTD:
-        avgCumplimiento !== null ? `${Math.round(avgCumplimiento)}%` : "—",
-      entidadesActivas: entities.length,
+      enviadosATiempo: totalATiempo,
+      enviadosFueraTiempo: totalFueraTiempo,
+      cumplimientoYTD,
       totalReportes,
+      retrasoPromedioLabel,
     };
   }, [entities]);
 
-  // --- Índice de riesgo regulatorio calculado desde riskSummary ---
+  // --- Índice de riesgo regulatorio ---
   const riskIndexLabel = useMemo(() => {
     if (!riskSummary || !riskSummary.total) return "—";
-    const high =
-      (riskSummary.critico || 0) + (riskSummary.alto || 0);
+    const high = (riskSummary.critico || 0) + (riskSummary.alto || 0);
     const ratio = high / riskSummary.total;
     if (ratio >= 0.5) return "Alto";
     if (ratio >= 0.2) return "Medio";
@@ -105,30 +141,42 @@ export default function Compliance() {
 
   return (
     <div className="space-y-6">
-      {/* KPIs de cumplimiento (visión global) */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* KPIs de cumplimiento (2 filas x 3 columnas) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard
           label="Cumplimiento a tiempo (YTD)"
           value={globalMetrics.cumplimientoYTD}
-          helper="Porcentaje de reportes enviados dentro del plazo."
+          helper="(Total reportes enviados a tiempo / Total reportes) × 100."
           tone="success"
+        />
+        <KpiCard
+          label="Reportes enviados a tiempo"
+          value={globalMetrics.enviadosATiempo}
+          helper="Total de reportes donde la fecha de envío fue menor o igual a la fecha de vencimiento."
+          tone="neutral"
+        />
+        <KpiCard
+          label="Reportes enviados fuera del tiempo"
+          value={globalMetrics.enviadosFueraTiempo}
+          helper="Total de reportes donde el envío se hizo después de la fecha de vencimiento."
+          tone="neutral"
         />
         <KpiCard
           label="Reportes vencidos"
           value={globalMetrics.vencidos}
-          helper="Cantidad total de reportes cuyo vencimiento ya pasó."
+          helper="Reportes cuyo vencimiento ya pasó y siguen en riesgo."
           tone="danger"
-        />
-        <KpiCard
-          label="Pendientes por cerrar"
-          value={globalMetrics.pendientes}
-          helper="Obligaciones en curso con vencimiento activo."
-          tone="warning"
         />
         <KpiCard
           label="Índice de riesgo regulatorio"
           value={riskIndexLabel}
-          helper="Calculado según la distribución de reportes por nivel de riesgo."
+          helper="Según la distribución entre niveles Crítico y Alto."
+          tone="warning"
+        />
+        <KpiCard
+          label="Días de retraso promedio"
+          value={globalMetrics.retrasoPromedioLabel}
+          helper="Promedio de días de retraso para los reportes enviados fuera del tiempo."
           tone="neutral"
         />
       </div>
@@ -207,9 +255,7 @@ export default function Compliance() {
                     </td>
                   </tr>
                 ) : (
-                  filteredEntities.map((e) => (
-                    <Row key={e.entidad} {...e} />
-                  ))
+                  filteredEntities.map((e) => <Row key={e.entidad} {...e} />)
                 )}
               </tbody>
             </table>
@@ -273,6 +319,58 @@ export default function Compliance() {
           </SectionCard>
         </div>
       </div>
+
+      {/* Visualizaciones sugeridas por el documento (estructura lista) */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <SectionCard
+          title="Distribución de estado"
+          subtitle="Gráfico de torta / donut: A tiempo, Fuera de tiempo, Pendiente y Vencido."
+        >
+          <p className="text-[11px] text-slate-500">
+            Aquí se mostrará visualmente qué parte del universo de obligaciones
+            está A Tiempo (verde), Tarde / Fuera de tiempo (amarillo/naranja),
+            No reportado / Pendiente (gris) y Vencido (rojo). Los datos salen de
+            las métricas globales ya calculadas.
+          </p>
+        </SectionCard>
+
+        <SectionCard
+          title="Tendencia histórica de cumplimiento"
+          subtitle="Gráfico de líneas o barras apiladas mes a mes."
+        >
+          <p className="text-[11px] text-slate-500">
+            Muestra la evolución del % de Cumplimiento a Tiempo por periodo
+            (mes o trimestre). El arreglo <code>complianceHistory</code> está
+            preparado para que el backend envíe la serie de tiempo y se pueda
+            graficar directamente.
+          </p>
+        </SectionCard>
+
+        <SectionCard
+          title="Cumplimiento por entidad"
+          subtitle="Gráfico de barras horizontales por entidad reguladora."
+        >
+          <p className="text-[11px] text-slate-500">
+            Usará el % de cumplimiento de cada entidad. Los datos vienen del
+            arreglo <code>entities</code> (campo <code>cumplimiento</code>).
+            Permite ver dónde se concentra el riesgo (ej. 95% con SUI, 60% con
+            Superservicios).
+          </p>
+        </SectionCard>
+
+        <SectionCard
+          title="Cumplimiento por responsable"
+          subtitle="Gráfico de barras horizontales por responsable de elaboración."
+        >
+          <p className="text-[11px] text-slate-500">
+            Muestra el % de Cumplimiento a Tiempo o el total de tareas vencidas
+            por cada responsable. El arreglo{" "}
+            <code>responsablesMetrics</code> está definido para que, cuando el
+            backend lo exponga, se pueda construir la gráfica sin cambiar el
+            resto del código.
+          </p>
+        </SectionCard>
+      </div>
     </div>
   );
 }
@@ -293,7 +391,7 @@ function KpiCard({ label, value, helper, tone = "neutral" }) {
 
   return (
     <div
-      className={`relative overflow-hidden rounded-2xl border p-4 text-xs ${tones[tone]}`}
+      className={`relative overflow-hidden rounded-2xl border p-4 text-xs min-h-[140px] flex flex-col justify-between ${tones[tone]}`}
     >
       <div className="pointer-events-none absolute inset-0 opacity-40 mix-blend-soft-light bg-[radial-gradient(circle_at_0_0,#ffffff,transparent_55%),radial-gradient(circle_at_100%_0,#e5e7eb,transparent_55%)]" />
       <div className="relative space-y-1">
