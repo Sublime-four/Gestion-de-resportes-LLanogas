@@ -1,4 +1,4 @@
-// src/router/index.jsx
+// src/router/index.jsx (solo las partes clave)
 import React from "react";
 import {
   Routes,
@@ -23,8 +23,9 @@ import MyTasks from "../pages/MyTasks";
 import AuthLayout from "../layouts/AuthLayout";
 import MainLayout from "../layouts/MainLayout";
 import useAuth from "../hooks/useAuth";
+import { can } from "../store/permissions";
 
-// ---------- Ruta privada: solo si hay sesión ----------
+// Ruta privada básica (solo sesión)
 function PrivateRoute() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
@@ -36,135 +37,171 @@ function PrivateRoute() {
   return <Outlet />;
 }
 
-// ---------- Definición de rutas ----------
+// Guardia por permiso usando permissions.js
+function PermissionRoute({ permission, children }) {
+  const { user, isAuthenticated } = useAuth();
+
+  // Si no está autenticado, que lo maneje PrivateRoute
+  if (!isAuthenticated) {
+    return children;
+  }
+
+  // Si no se ha definido un permiso, deja pasar
+  if (!permission) return children;
+
+  const hasPermission = can(user, permission);
+
+  if (!hasPermission) {
+    return (
+      <div className="p-6 text-sm text-red-600">
+        No tienes permisos para ver esta sección.
+      </div>
+    );
+  }
+
+  return children;
+}
+
 export default function AppRouter() {
   return (
     <Routes>
-      {/* Rutas de autenticación (sin sesión requerida) */}
+      {/* Auth */}
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
       </Route>
 
-      {/* App interna protegida */}
+      {/* App interna */}
       <Route element={<PrivateRoute />}>
-        {/* redirect raíz */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-        {/* Todas las internas envueltas en MainLayout */}
         <Route
           path="/dashboard"
           element={
-            <MainLayout
-              title="Dashboard de cumplimiento"
-              subtitle="Visión general del estado regulatorio por entidad y reporte."
-            >
-              <Dashboard />
-            </MainLayout>
+            <PermissionRoute permission="nav.dashboard">
+              <MainLayout
+                title="Dashboard de cumplimiento"
+                subtitle="Visión general del estado regulatorio por entidad y reporte."
+              >
+                <Dashboard />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
         <Route
           path="/reports"
           element={
-            <MainLayout
-              title="Reportes regulatorios"
-              subtitle="Gestión y seguimiento de los reportes enviados y pendientes."
-            >
-              <Reports />
-            </MainLayout>
+            <PermissionRoute permission="nav.reports">
+              <MainLayout
+                title="Reportes regulatorios"
+                subtitle="Gestión y seguimiento de los reportes enviados y pendientes."
+              >
+                <Reports />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
         <Route
           path="/calendar"
           element={
-            <MainLayout
-              title="Calendario de obligaciones"
-              subtitle="Fechas clave de vencimientos y actividades."
-            >
-              <Calendar />
-            </MainLayout>
+            <PermissionRoute permission="nav.calendar">
+              <MainLayout
+                title="Calendario de obligaciones"
+                subtitle="Fechas clave de vencimientos y actividades."
+              >
+                <Calendar />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
         <Route
           path="/compliance"
           element={
-            <MainLayout
-              title="Tablero de cumplimiento"
-              subtitle="Vista resumida del estado de los reportes frente a las entidades."
-            >
-              <Compliance />
-            </MainLayout>
+            <PermissionRoute permission="nav.compliance">
+              <MainLayout
+                title="Tablero de cumplimiento"
+                subtitle="Vista resumida del estado de los reportes frente a las entidades."
+              >
+                <Compliance />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
         <Route
           path="/users"
           element={
-            <MainLayout
-              title="Usuarios y roles"
-              subtitle="Gestión básica de accesos al sistema de reportes."
-            >
-              <Users />
-            </MainLayout>
+            <PermissionRoute permission="nav.users">
+              <MainLayout
+                title="Usuarios y roles"
+                subtitle="Gestión básica de accesos al sistema de reportes."
+              >
+                <Users />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
         <Route
           path="/settings"
           element={
-            <MainLayout
-              title="Configuración"
-              subtitle="Parámetros generales de la plataforma."
-            >
-              <Settings />
-            </MainLayout>
+            <PermissionRoute permission="nav.settings">
+              <MainLayout
+                title="Configuración"
+                subtitle="Parámetros generales de la plataforma."
+              >
+                <Settings />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
-        {/* 🔹 NUEVA: Mis tareas pendientes */}
         <Route
-          path="/my-tasks" // o "/mis-tareas" si lo prefieres en español
+          path="/my-tasks"
           element={
-            <MainLayout
-              title="Mis tareas pendientes"
-              subtitle="Obligaciones de reporte asignadas a tu usuario."
-            >
-              <MyTasks />
-            </MainLayout>
+            <PermissionRoute permission="nav.myTasks">
+              <MainLayout
+                title="Mis tareas pendientes"
+                subtitle="Obligaciones de reporte asignadas a tu usuario."
+              >
+                <MyTasks />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
-        {/* Mapa de localizaciones (protegido) */}
         <Route
           path="/locations-map"
           element={
-            <MainLayout
-              title="Mapa de localizaciones"
-              subtitle="Visualización geográfica de activos y puntos de operación."
-            >
-              <LocationsMap />
-            </MainLayout>
+            <PermissionRoute permission="nav.locations">
+              <MainLayout
+                title="Mapa de localizaciones"
+                subtitle="Visualización geográfica de activos y puntos de operación."
+              >
+                <LocationsMap />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
 
-        {/* Entidades de control (protegido) */}
         <Route
           path="/entities"
           element={
-            <MainLayout
-              title="Entidades de control"
-              subtitle="Catálogo centralizado de entidades reguladoras."
-            >
-              <Entities />
-            </MainLayout>
+            <PermissionRoute permission="nav.entities">
+              <MainLayout
+                title="Entidades de control"
+                subtitle="Catálogo centralizado de entidades reguladoras."
+              >
+                <Entities />
+              </MainLayout>
+            </PermissionRoute>
           }
         />
       </Route>
 
-      {/* Fallback */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

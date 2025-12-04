@@ -3,37 +3,39 @@ import React, { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 import logoLlanogas from "../assets/logo-llanogas.png";
-import gasBg from "../assets/gas.jpg"; // <= asegúrate del nombre/ruta
+import gasBg from "../assets/gas.jpg";
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login } = useAuth(); // <- viene del AuthContext
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ✅ sin correo tuyo hardcodeado
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const from = location.state?.from?.pathname || "/dashboard";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (loading) return;
-    setLoading(true);
 
-    // TODO: reemplazar por respuesta real de la API de autenticación
-    const userPayload = {
-      email,
-      // estos campos se deberían poblar desde el backend
-      name: "",
-      role: "",
-    };
+    setLoading(true);
+    setError("");
 
     try {
-      await login(userPayload, { remember });
+      // 🔐 delegamos toda la llamada al backend al AuthContext
+      await login(email, password, { remember });
+
+      // si no lanza error, navega al dashboard (o a donde venga en state)
       navigate(from, { replace: true });
+    } catch (err) {
+      console.error("[Login] error", err);
+      setError(
+        err?.message || "Error al iniciar sesión. Verifica tus credenciales."
+      );
     } finally {
       setLoading(false);
     }
@@ -138,18 +140,23 @@ export default function Login() {
                   />
                   <span>Recordarme en este equipo</span>
                 </label>
-               
 
-<button
-  type="button"
-  onClick={() => navigate("/forgot-password")}
-  className="text-[11px] text-sky-400 hover:text-sky-300"
->
-  ¿Olvidaste tu contraseña?
-</button>
-
+                <button
+                  type="button"
+                  onClick={() => navigate("/forgot-password")}
+                  className="text-[11px] text-sky-400 hover:text-sky-300"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
               </div>
             </div>
+
+            {/* Error backend */}
+            {error && (
+              <div className="text-[11px] text-red-400 bg-red-950/40 border border-red-500/40 rounded-lg px-3 py-2">
+                {error}
+              </div>
+            )}
 
             {/* Botón principal */}
             <button
@@ -181,22 +188,17 @@ export default function Login() {
 
         {/* Panel derecho: imagen de gas + tarjetas de información */}
         <div className="hidden lg:block relative flex-1 group overflow-hidden">
-          {/* Fondo con imagen */}
           <div className="absolute inset-0">
             <img
               src={gasBg}
               alt="Gas natural Llanogas"
               className="w-full h-full object-cover scale-110 transform transition-transform duration-[2500ms] group-hover:scale-125"
             />
-            {/* Capa de degradado */}
             <div className="absolute inset-0 bg-gradient-to-br from-slate-950/80 via-sky-700/45 to-emerald-500/40 mix-blend-soft-light" />
-            {/* Glow circular simulando el quemador */}
             <div className="absolute -bottom-24 right-[-12%] w-[440px] h-[440px] rounded-full bg-sky-400/25 blur-3xl" />
           </div>
 
-          {/* Contenido sobre la imagen */}
           <div className="relative z-10 h-full flex flex-col justify-between p-8 gap-4">
-            {/* Tarjeta principal arriba (tipo “cuadro ejecutivo”) */}
             <div className="max-w-sm rounded-2xl bg-slate-900/80 border border-sky-400/40 px-5 py-4 shadow-[0_22px_70px_rgba(15,23,42,0.95)] backdrop-blur-md">
               <p className="text-[10px] font-semibold text-sky-300 uppercase tracking-[0.16em] mb-2">
                 Centro regulatorio Llanogas
@@ -212,7 +214,6 @@ export default function Login() {
               </div>
             </div>
 
-            {/* Bloque inferior con dos cuadritos tipo KPI descriptivo */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 self-stretch max-w-md ml-auto">
               <SmallInfoCard
                 label="Visión ejecutiva"
@@ -233,14 +234,6 @@ export default function Login() {
 }
 
 /* Subcomponentes pequeños */
-
-function Badge({ children }) {
-  return (
-    <span className="inline-flex items-center rounded-full bg-slate-900/80 border border-sky-500/40 px-2.5 py-0.5 text-[10px] text-sky-100">
-      {children}
-    </span>
-  );
-}
 
 function InfoChip({ title, detail }) {
   return (

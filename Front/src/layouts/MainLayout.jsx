@@ -19,6 +19,46 @@ const adminNav = [
   { to: "/settings", icon: "⚙️", label: "Configuración" },
 ];
 
+// 🔐 qué rutas del menú puede ver cada rol
+const ROLE_NAV_PERMISSIONS = {
+  admin: [
+    "/dashboard",
+    "/my-tasks",
+    "/reports",
+    "/entities",
+    "/calendar",
+    "/compliance",
+    "/locations-map",
+    "/users",
+    "/settings",
+  ],
+  responsable_reportes: [
+    "/dashboard",
+    "/my-tasks",
+    "/reports",
+    "/entities",
+    "/calendar",
+    "/compliance",
+    "/locations-map",
+  ],
+  supervisor_cumplimiento: [
+    "/dashboard",
+    "/my-tasks",
+    "/reports",
+    "/entities",
+    "/calendar",
+    "/compliance",
+    "/locations-map",
+  ],
+  consulta_auditoria: [
+    "/dashboard",
+    "/reports",
+    "/entities",
+    "/compliance",
+    "/locations-map",
+  ],
+};
+
 const MONTH_NAMES = [
   "Ene",
   "Feb",
@@ -56,6 +96,19 @@ function SidebarNavItem({ to, icon, label }) {
 export default function MainLayout({ title, subtitle, children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+
+  // 🔑 rol interno para permisos (id tipo "admin", "responsable_reportes", etc.)
+  const roleId = user?.roleId || null;
+
+  // helper para filtrar ítems de menú según rol
+  const filterNavItems = (items) => {
+    if (!roleId) return items; // si no hay rol, no escondemos nada (útil mientras conectas auth real)
+    const allowed = ROLE_NAV_PERMISSIONS[roleId] || [];
+    return items.filter((item) => allowed.includes(item.to));
+  };
+
+  const visibleMainNav = filterNavItems(mainNav);
+  const visibleAdminNav = filterNavItems(adminNav);
 
   // ---------- período global ----------
   const [period, setPeriod] = useState(() => {
@@ -107,7 +160,6 @@ export default function MainLayout({ title, subtitle, children }) {
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  // Cargar alertas a partir de los reportes guardados en localStorage
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -129,7 +181,6 @@ export default function MainLayout({ title, subtitle, children }) {
     }
   }, []);
 
-  // Persistir notificaciones (incluye flag read)
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -171,7 +222,6 @@ export default function MainLayout({ title, subtitle, children }) {
     navigate("/login", { replace: true });
   };
 
-  // Colores por tipo de alerta
   const alertTypeClass = (type) => {
     switch (type) {
       case "Verde":
@@ -212,23 +262,27 @@ export default function MainLayout({ title, subtitle, children }) {
         </div>
 
         <nav className="flex-1 px-4 py-5 text-sm space-y-6 overflow-y-auto">
-          <div>
-            <p className="px-2 text-[11px] uppercase tracking-[0.18em] text-slate-500 mb-2">
-              Navegación
-            </p>
-            {mainNav.map((item) => (
-              <SidebarNavItem key={item.to} {...item} />
-            ))}
-          </div>
+          {visibleMainNav.length > 0 && (
+            <div>
+              <p className="px-2 text-[11px] uppercase tracking-[0.18em] text-slate-500 mb-2">
+                Navegación
+              </p>
+              {visibleMainNav.map((item) => (
+                <SidebarNavItem key={item.to} {...item} />
+              ))}
+            </div>
+          )}
 
-          <div>
-            <p className="px-2 text-[11px] uppercase tracking-[0.18em] text-slate-500 mb-2">
-              Administración
-            </p>
-            {adminNav.map((item) => (
-              <SidebarNavItem key={item.to} {...item} />
-            ))}
-          </div>
+          {visibleAdminNav.length > 0 && (
+            <div>
+              <p className="px-2 text-[11px] uppercase tracking-[0.18em] text-slate-500 mb-2">
+                Administración
+              </p>
+              {visibleAdminNav.map((item) => (
+                <SidebarNavItem key={item.to} {...item} />
+              ))}
+            </div>
+          )}
         </nav>
 
         {/* Footer sidebar con usuario */}
