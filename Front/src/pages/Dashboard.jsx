@@ -1,6 +1,5 @@
 // src/pages/Dashboard.jsx
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -17,73 +16,385 @@ import {
   Bar,
 } from "recharts";
 
+/* =========================================================
+   Helpers internos (antes venían de ../utils/dashboardHelpers)
+   ========================================================= */
+
+// Parseo de fechas
+function parseDateString(dateStr) {
+  if (!dateStr) return null;
+
+  const iso = new Date(dateStr);
+  if (!isNaN(iso)) return iso;
+
+  const parts = String(dateStr).split("/");
+  if (parts.length === 3) {
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const y = parseInt(parts[2], 10);
+    return new Date(y, m, d);
+  }
+
+  return null;
+}
+
+// Normalización de frecuencia
+function validateFrequency(f) {
+  if (!f && f !== "") return null;
+  const s = String(f).trim().toLowerCase();
+  if (s === "mensual" || s === "monthly") return "Mensual";
+  if (s === "trimestral") return "Trimestral";
+  if (s === "semestral") return "Semestral";
+  if (s === "anual" || s === "annual") return "Anual";
+  return null;
+}
+
+function addMonthsSafe(date, months) {
+  const d = new Date(date.getTime());
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+  if (d.getDate() !== day) {
+    d.setDate(0);
+  }
+  return d;
+}
+
+function computeNextDue(startDateStr, frecuencia) {
+  const start = parseDateString(startDateStr);
+  if (!start) return null;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  let next = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+
+  const freqMap = {
+    Mensual: 1,
+    Trimestral: 3,
+    Semestral: 6,
+    Anual: 12,
+  };
+  const valid = validateFrequency(frecuencia) || "Mensual";
+  const step = freqMap[valid];
+
+  while (next <= today) {
+    next = addMonthsSafe(next, step);
+    if (next.getFullYear() > now.getFullYear() + 10) break;
+  }
+  return next;
+}
+
+function formatDate(d) {
+  if (!d) return "-";
+  const date = d instanceof Date ? d : parseDateString(d);
+  if (!date) return "-";
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function monthsUntil(date) {
+  if (!date) return null;
+  const d = date instanceof Date ? date : parseDateString(date);
+  if (!d) return null;
+  const now = new Date();
+  return (
+    (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth())
+  );
+}
+
+function daysUntil(date) {
+  if (!date) return null;
+  const d = date instanceof Date ? date : parseDateString(date);
+  if (!d) return null;
+
+  const now = new Date();
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.ceil((target - today) / (1000 * 60 * 60 * 24));
+}
+
+function criticidadFromMonths(months) {
+  if (months === null || months === undefined) return "-";
+  if (months <= 1) return "Crítica";
+  if (months >= 2 && months <= 6) return "Alta";
+  if (months >= 7 && months <= 10) return "Media";
+  return "Baja";
+}
+
+// Cargar reportes desde localStorage y calcular nextDue
+function loadReportsData() {
+  try {
+    const raw = localStorage.getItem("reportesCreados");
+    const arr = raw ? JSON.parse(raw) : [];
+
+    return arr
+      .map((rep) => {
+        const freq = rep.frecuencia || "Mensual";
+        const nextDue = computeNextDue(rep.fechaInicio, freq);
+        return { ...rep, nextDue };
+      })
+      .filter((r) => r.nextDue != null)
+      .sort((a, b) => a.nextDue - b.nextDue);
+  } catch (e) {
+    console.error("Error cargando reportes desde localStorage", e);
+    return [];
+  }
+}
+
+// Métricas globales
+function calculateMetrics(reports) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const totalReports = reports.length;
+
+  const countOverdue = reports.filter((r) => {
+    if (!r.nextDue) return false;
+    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
+    if (!d) return false;
+    const extended = new Date(d);
+    extended.setDate(extended.getDate() + 2);
+    return extended < today;
+  }).length;
+
+  const countActive = reports.filter((r) => {
+    if (!r.nextDue) return false;
+    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
+    if (!d) return false;
+    return d > today;
+  }).length;
+
+  const countPending = Math.max(0, totalReports - countActive - countOverdue);
+
+  const percentOnTime = totalReports
+    ? Math.round((countActive / totalReports) * 100)
+    : 0;
+
+  return {
+    totalReports,
+    countActive,
+    countPending,
+    countOverdue,
+    percentOnTime,
+  };
+}
+
+// Próximos vencimientos
+function getUpcomingReports(reports, daysWindow = 15) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  return reports
+    .filter((r) => {
+      if (!r.nextDue) return false;
+      const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
+      if (!d) return false;
+      const diff = (d - today) / (1000 * 60 * 60 * 24);
+      return diff >= 0 && diff <= daysWindow;
+    })
+    .sort((a, b) => a.nextDue - b.nextDue);
+}
+
+// Riesgo por entidad
+function getRiskByEntity(reports) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const map = {};
+
+  reports.forEach((r) => {
+    const entidad = r.entidadControl || r.entity || "Otros";
+    if (!r.nextDue) return;
+    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
+    if (!d) return;
+
+    const extended = new Date(d);
+    extended.setDate(extended.getDate() + 2);
+    const isOverdue = extended < today;
+
+    if (!map[entidad]) {
+      map[entidad] = { entidad, total: 0, vencidos: 0 };
+    }
+    map[entidad].total += 1;
+    if (isOverdue) map[entidad].vencidos += 1;
+  });
+
+  return Object.values(map)
+    .map((e) => ({
+      ...e,
+      riesgo: e.total ? Math.round((e.vencidos / e.total) * 100) : 0,
+    }))
+    .sort((a, b) => b.riesgo - a.riesgo || b.vencidos - a.vencidos);
+}
+
+// Tendencia de cumplimiento (últimos N meses)
+function getComplianceTrend(reports, monthsBack = 5) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(now.getFullYear(), now.getMonth() - (monthsBack - 1), 1);
+
+  const buckets = new Map();
+
+  for (let i = 0; i < monthsBack; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    buckets.set(key, {
+      mes: `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
+      total: 0,
+      ontime: 0,
+    });
+  }
+
+  reports.forEach((r) => {
+    if (!r.nextDue) return;
+    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
+    if (!d) return;
+
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    const bucket = buckets.get(key);
+    if (!bucket) return;
+
+    bucket.total += 1;
+
+    const extended = new Date(d);
+    extended.setDate(extended.getDate() + 2);
+    const isOverdue = extended < today;
+    if (!isOverdue) bucket.ontime += 1;
+  });
+
+  return Array.from(buckets.values()).map((b) => ({
+    mes: b.mes,
+    cumplimiento: b.total ? Math.round((b.ontime / b.total) * 100) : 0,
+  }));
+}
+
+/* =========================================================
+   Componente Dashboard
+   ========================================================= */
+
 const STATUS_COLORS = ["#16a34a", "#f59e0b", "#0f172a", "#dc2626"];
 
 export default function Dashboard() {
-  const navigate = useNavigate();
-
-  // ------- Datos que vendrán del backend --------
-  // TODO: rellenar estos estados con datos reales desde la API (useEffect / react-query / etc.)
-  const [kpis, setKpis] = useState({
-    complianceOnTime: null,      // número (porcentaje)
-    complianceDeltaLabel: null,  // texto tipo "+4 pts vs mes anterior"
-    complianceStatusLabel: null, // texto tipo "Positivo"
-
-    overdueReports: null,        // número
-    monthlyReports: null,        // número
-    entitiesAtRisk: null,        // número
-
-    serviceLevel: null,          // porcentaje
-    backlog: null,               // número
+  const [reports, setReports] = useState([]);
+  const [metrics, setMetrics] = useState({
+    totalReports: 0,
+    countActive: 0,
+    countPending: 0,
+    countOverdue: 0,
+    percentOnTime: 0,
   });
+  const [upcomingReports, setUpcomingReports] = useState([]);
+  const [riskByEntity, setRiskByEntity] = useState([]);
+  const [complianceTrend, setComplianceTrend] = useState([]);
+  const [statusDistribution, setStatusDistribution] = useState([]);
+  const [lastRefresh, setLastRefresh] = useState(null);
 
-  const [trendData, setTrendData] = useState([]); // [{ mes, cumplimiento }]
-  const [statusData, setStatusData] = useState([]); // [{ name, value }]
-  const [entityRiskData, setEntityRiskData] = useState([]); // [{ entidad, vencidos, riesgo }]
-  const [upcomingReports, setUpcomingReports] = useState([]); // [{ name, entity, owner, due, status, statusTone, frequency }]
-  const [recentActivity, setRecentActivity] = useState([]); // [{ time, title, detail, badge }]
+  useEffect(() => {
+    const loadData = () => {
+      const allReports = loadReportsData();
+      setReports(allReports);
 
-  // ------- Filtro de próximos vencimientos -------
-  const [statusFilter, setStatusFilter] = useState("Todos");
+      const calc = calculateMetrics(allReports);
+      setMetrics(calc);
 
-  const filteredUpcoming = upcomingReports.filter((r) =>
-    statusFilter === "Todos" ? true : r.status === statusFilter
-  );
+      const upcoming = getUpcomingReports(allReports, 15);
+      setUpcomingReports(upcoming);
+
+      const riskData = getRiskByEntity(allReports);
+      setRiskByEntity(riskData);
+
+      const trend = getComplianceTrend(allReports, 5);
+      setComplianceTrend(trend);
+
+      const distribution = [
+        { name: "A tiempo", value: calc.countActive },
+        { name: "Pendientes", value: calc.countPending },
+        { name: "Vencidos", value: calc.countOverdue },
+      ].filter((x) => x.value > 0);
+      setStatusDistribution(distribution);
+
+      setLastRefresh(new Date());
+    };
+
+    loadData();
+    // Si luego conectas backend, aquí reemplazas loadReportsData por un fetch.
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const nextVencimiento = upcomingReports[0];
+  const diasParaVencimiento = nextVencimiento
+    ? daysUntil(nextVencimiento.nextDue)
+    : null;
+  const entidadConMasRiesgo = riskByEntity[0]?.entidad || "-";
+  const entidadesConRiesgo = riskByEntity.filter(
+    (e) => e.vencidos > 0 || e.riesgo > 0
+  ).length;
+  const hasData = metrics.totalReports > 0;
 
   return (
     <div className="space-y-6">
+      {/* Header mini ejecutivo */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+        <div>
+          <h1 className="text-lg font-semibold text-slate-900">
+            Tablero regulatorio
+          </h1>
+          <p className="text-xs text-slate-500">
+            Visibilidad ejecutiva sobre vencimientos, cumplimiento y riesgo por entidad.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-slate-500">
+          <span className="hidden sm:inline">
+            {hasData
+              ? `${metrics.totalReports} reportes en portafolio`
+              : "Sin reportes configurados aún"}
+          </span>
+          {lastRefresh && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 bg-white">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Última actualización:{" "}
+              {lastRefresh.toLocaleString("es-CO", {
+                hour12: false,
+              })}
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KpiCard
           title="% Cumplimiento a tiempo"
-          value={
-            kpis.complianceOnTime != null
-              ? `${kpis.complianceOnTime}%`
-              : "—"
-          }
-          subtitle={
-            kpis.complianceDeltaLabel || "Variación vs periodo anterior."
-          }
-          status={kpis.complianceStatusLabel || undefined}
-          variant="success"
+          value={`${metrics.percentOnTime}%`}
+          subtitle={`${metrics.countActive} de ${metrics.totalReports} reportes`}
+          status={hasData ? "Dinámico" : "Sin datos"}
         />
         <KpiCard
           title="Reportes vencidos"
-          value={kpis.overdueReports != null ? kpis.overdueReports : "—"}
-          subtitle="Total de reportes con vencimiento ya superado."
-          variant="danger"
+          value={metrics.countOverdue}
+          subtitle={`${
+            metrics.countOverdue > 0 ? "⚠️ Requieren atención" : "✓ Sin vencidos"
+          }`}
+          variant={metrics.countOverdue > 0 ? "danger" : "success"}
         />
         <KpiCard
-          title="Reportes en el período"
-          value={kpis.monthlyReports != null ? kpis.monthlyReports : "—"}
-          subtitle="Cantidad de obligaciones en el período seleccionado."
+          title="Reportes totales"
+          value={metrics.totalReports}
+          subtitle={`${metrics.countActive} a tiempo, ${metrics.countPending} pendientes`}
           variant="neutral"
         />
         <KpiCard
           title="Entidades con riesgo"
-          value={kpis.entitiesAtRisk != null ? kpis.entitiesAtRisk : "—"}
-          subtitle="Número de entidades con nivel de riesgo relevante."
-          variant="warning"
+          value={entidadesConRiesgo}
+          subtitle={
+            hasData
+              ? `${entidadConMasRiesgo} con mayor riesgo`
+              : "Configura reportes para ver riesgo"
+          }
+          variant={entidadesConRiesgo > 0 ? "warning" : "success"}
         />
       </div>
 
@@ -93,23 +404,20 @@ export default function Dashboard() {
         <div className="xl:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col">
           <HeaderCard
             title="Evolución de cumplimiento"
-            subtitle="Porcentaje de reportes enviados a tiempo por mes."
-            pill="Serie temporal"
+            subtitle="Porcentaje de reportes enviados a tiempo por mes"
+            pill="Últimos 5 meses"
           />
-          <div className="mt-4 h-64">
-            {trendData.length === 0 ? (
-              <EmptyStateChart />
+          <div className="mt-4 h-64 flex items-center justify-center">
+            {complianceTrend.length === 0 ? (
+              <p className="text-[11px] text-slate-500">
+                Aún no hay suficientes datos para graficar la tendencia de cumplimiento.
+              </p>
             ) : (
-              <ResponsiveContainer
-                width="100%"
-                height="100%"
-                minWidth={0}
-                minHeight={0}
-              >
-                <LineChart data={trendData} margin={{ left: -24 }}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <LineChart data={complianceTrend} margin={{ left: -24 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-                  <YAxis unit="%" tick={{ fontSize: 11 }} />
+                  <YAxis unit="%" domain={[0, 100]} tick={{ fontSize: 11 }} />
                   <Tooltip
                     contentStyle={{
                       fontSize: 12,
@@ -135,29 +443,27 @@ export default function Dashboard() {
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col">
           <HeaderCard
             title="Estado de los reportes"
-            subtitle="Distribución actual del portafolio."
+            subtitle="Distribución actual del portafolio"
           />
           <div className="mt-2 flex-1 flex flex-col">
-            <div className="h-48">
-              {statusData.length === 0 ? (
-                <EmptyStateChart />
+            <div className="h-48 flex items-center justify-center">
+              {statusDistribution.length === 0 ? (
+                <p className="text-[11px] text-slate-500">
+                  Aún no hay distribución disponible. Crea reportes en el módulo de
+                  portafolio.
+                </p>
               ) : (
-                <ResponsiveContainer
-                  width="100%"
-                  height="100%"
-                  minWidth={0}
-                  minHeight={0}
-                >
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                   <PieChart>
                     <Pie
-                      data={statusData}
+                      data={statusDistribution}
                       dataKey="value"
                       nameKey="name"
                       innerRadius={45}
                       outerRadius={70}
                       paddingAngle={3}
                     >
-                      {statusData.map((entry, index) => (
+                      {statusDistribution.map((entry, index) => (
                         <Cell
                           key={`cell-${index}`}
                           fill={STATUS_COLORS[index % STATUS_COLORS.length]}
@@ -180,54 +486,37 @@ export default function Dashboard() {
             <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
               <MiniMetric
                 label="Nivel de servicio"
-                value={
-                  kpis.serviceLevel != null
-                    ? `${kpis.serviceLevel}%`
-                    : "—"
-                }
-                desc="Porcentaje de servicios dentro de los SLA."
+                value={hasData ? `${metrics.percentOnTime}%` : "-"}
+                desc="Meta 90%"
               />
               <MiniMetric
                 label="Backlog operativo"
-                value={kpis.backlog != null ? kpis.backlog : "—"}
-                desc="Suma de pendientes y vencidos."
+                value={
+                  hasData ? metrics.countPending + metrics.countOverdue : "-"
+                }
+                desc="Pendientes + vencidos"
               />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Lower row: tabla + riesgo por entidad + actividad */}
+      {/* Lower row: tabla + riesgo por entidad + resumen */}
       <div className="grid grid-cols-1 2xl:grid-cols-3 gap-4">
         {/* Próximos vencimientos */}
         <div className="2xl:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center justify-between mb-3">
             <HeaderCard
               title="Próximos vencimientos"
-              subtitle="Obligaciones con vencimiento cercano."
+              subtitle={
+                hasData
+                  ? `${upcomingReports.length} obligaciones en los próximos 15 días`
+                  : "Configura reportes para ver vencimientos"
+              }
             />
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              {["Todos", "En proceso", "Pendiente"].map((label) => (
-                <button
-                  key={label}
-                  onClick={() => setStatusFilter(label)}
-                  className={[
-                    "text-[11px] px-2.5 py-1 rounded-full border transition",
-                    statusFilter === label
-                      ? "bg-slate-900 text-white border-slate-900"
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50",
-                  ].join(" ")}
-                >
-                  {label}
-                </button>
-              ))}
-              <button
-                className="text-[11px] px-2.5 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50"
-                onClick={() => navigate("/calendar")}
-              >
-                Ver calendario
-              </button>
-            </div>
+            <button className="text-[11px] px-2.5 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50">
+              Ver todos
+            </button>
           </div>
 
           <table className="w-full text-xs text-left">
@@ -237,47 +526,54 @@ export default function Dashboard() {
                 <th className="py-2 font-medium">Entidad</th>
                 <th className="py-2 font-medium">Responsable</th>
                 <th className="py-2 font-medium">Vence</th>
-                <th className="py-2 text-center font-medium">Estado</th>
+                <th className="py-2 text-center font-medium">Días</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredUpcoming.length === 0 ? (
+              {upcomingReports.slice(0, 4).map((r) => (
+                <ReportRow
+                  key={r.id}
+                  name={r.nombreReporte}
+                  entity={r.entidadControl || "-"}
+                  owner={r.responsableElaboracionName || "-"}
+                  due={formatDate(r.nextDue)}
+                  days={daysUntil(r.nextDue)}
+                />
+              ))}
+              {upcomingReports.length === 0 && (
                 <tr>
                   <td
-                    colSpan={5}
-                    className="py-4 pl-2 pr-2 text-[11px] text-slate-500 text-center"
+                    colSpan="5"
+                    className="py-4 text-center text-slate-500 text-[11px]"
                   >
-                    No hay vencimientos próximos según los filtros actuales.
+                    No hay reportes venciendo en los próximos 15 días.
                   </td>
                 </tr>
-              ) : (
-                filteredUpcoming.map((r) => (
-                  <ReportRow key={r.id || r.name} {...r} />
-                ))
               )}
             </tbody>
           </table>
         </div>
 
-        {/* Riesgo por entidad + actividad reciente */}
+        {/* Riesgo por entidad + resumen ejecutivo */}
         <div className="space-y-4">
           {/* Riesgo por entidad */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
             <HeaderCard
               title="Riesgo por entidad"
-              subtitle="Vencidos y nivel de riesgo relativo por regulador."
+              subtitle={
+                hasData
+                  ? `${riskByEntity.length} entidades en portafolio`
+                  : "Sin entidades con reportes configurados"
+              }
             />
-            <div className="mt-4 h-40">
-              {entityRiskData.length === 0 ? (
-                <EmptyStateChart />
+            <div className="mt-4 h-40 flex items-center justify-center">
+              {riskByEntity.length === 0 ? (
+                <p className="text-[11px] text-slate-500">
+                  Aún no hay suficientes datos para calcular el riesgo por entidad.
+                </p>
               ) : (
-                <ResponsiveContainer
-                  width="100%"
-                  height="100%"
-                  minWidth={0}
-                  minHeight={0}
-                >
-                  <BarChart data={entityRiskData} barSize={16}>
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                  <BarChart data={riskByEntity} barSize={16}>
                     <CartesianGrid
                       strokeDasharray="3 3"
                       vertical={false}
@@ -301,39 +597,51 @@ export default function Dashboard() {
                       }}
                     />
                     <Bar dataKey="vencidos" name="Vencidos" fill="#dc2626" />
-                    <Bar dataKey="riesgo" name="Riesgo" fill="#f97316" />
+                    <Bar dataKey="riesgo" name="% Riesgo" fill="#f97316" />
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
           </div>
 
-          {/* Actividad reciente */}
+          {/* Resumen ejecutivo */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
             <HeaderCard
-              title="Actividad reciente"
-              subtitle="Últimos movimientos de reportes."
+              title="Resumen ejecutivo"
+              subtitle="Indicadores clave de rendimiento"
             />
-            {recentActivity.length === 0 ? (
-              <p className="mt-3 text-[11px] text-slate-500">
-                No hay actividad registrada aún. Aquí se mostrarán los eventos
-                recientes cuando el backend los provea.
-              </p>
-            ) : (
-              <>
-                <ul className="mt-3 space-y-3 text-[11px]">
-                  {recentActivity.map((item, idx) => (
-                    <TimelineItem key={idx} {...item} />
-                  ))}
-                </ul>
-              </>
-            )}
-            <button
-              className="mt-3 w-full text-[11px] py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50"
-              onClick={() => navigate("/reports")}
-            >
-              Ver todo el historial
-            </button>
+            <ul className="mt-3 space-y-2 text-[11px]">
+              <li className="flex justify-between items-center p-2 bg-slate-50 rounded">
+                <span className="text-slate-600">Próximo vencimiento:</span>
+                <span className="font-medium">
+                  {nextVencimiento && diasParaVencimiento !== null
+                    ? `${diasParaVencimiento} días`
+                    : "Sin próximos"}
+                </span>
+              </li>
+              <li className="flex justify-between items-center p-2 bg-slate-50 rounded">
+                <span className="text-slate-600">Entidad con más riesgo:</span>
+                <span className="font-medium">{entidadConMasRiesgo}</span>
+              </li>
+              <li className="flex justify-between items-center p-2 bg-slate-50 rounded">
+                <span className="text-slate-600">Portafolio total:</span>
+                <span className="font-medium">
+                  {metrics.totalReports} reportes
+                </span>
+              </li>
+              <li className="flex justify-between items-center p-2 bg-slate-50 rounded">
+                <span className="text-slate-600">Tasa de cumplimiento:</span>
+                <span
+                  className={`font-medium ${
+                    metrics.percentOnTime >= 85
+                      ? "text-emerald-600"
+                      : "text-amber-600"
+                  }`}
+                >
+                  {metrics.percentOnTime}%
+                </span>
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -341,7 +649,7 @@ export default function Dashboard() {
   );
 }
 
-/* Components auxiliares */
+/* ================== Subcomponentes ================== */
 
 function HeaderCard({ title, subtitle, pill }) {
   return (
@@ -405,36 +713,28 @@ function MiniMetric({ label, value, desc }) {
   );
 }
 
-function ReportRow({ name, entity, owner, due, status, statusTone, frequency }) {
-  const statusColors = {
-    warning: "bg-amber-100 text-amber-800",
-    danger: "bg-red-100 text-red-800",
-    info: "bg-sky-100 text-sky-800",
-    success: "bg-emerald-100 text-emerald-800",
+function ReportRow({ name, entity, owner, due, days }) {
+  const getDayColor = (d) => {
+    if (d === null) return "text-slate-600";
+    if (d < 0) return "text-red-600 font-semibold";
+    if (d <= 3) return "text-amber-600 font-semibold";
+    return "text-slate-600";
   };
 
   return (
     <tr className="text-slate-700 hover:bg-slate-50/80 transition">
       <td className="py-2.5 pl-2 pr-2">
         <p className="font-medium text-[11px]">{name}</p>
-        <p className="text-[11px] text-slate-500">
-          Frecuencia:{" "}
-          <span className="font-medium">
-            {frequency || "—"}
-          </span>
-        </p>
       </td>
       <td className="py-2.5 pr-2 text-[11px] text-slate-600">{entity}</td>
       <td className="py-2.5 pr-2 text-[11px] text-slate-600">{owner}</td>
       <td className="py-2.5 pr-2 text-[11px] text-slate-600">{due}</td>
-      <td className="py-2.5 pr-2">
-        <span
-          className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-medium ${
-            statusColors[statusTone] || statusColors.info
-          }`}
-        >
-          {status}
-        </span>
+      <td
+        className={`py-2.5 pr-2 text-center text-[11px] font-medium ${getDayColor(
+          days
+        )}`}
+      >
+        {days !== null ? `${days}d` : "-"}
       </td>
     </tr>
   );
@@ -459,16 +759,5 @@ function TimelineItem({ time, title, detail, badge }) {
         <p className="text-[10px] text-slate-400 mt-0.5">{time}</p>
       </div>
     </li>
-  );
-}
-
-function EmptyStateChart() {
-  return (
-    <div className="h-full w-full flex items-center justify-center">
-      <p className="text-[11px] text-slate-400">
-        Sin datos disponibles. Se mostrarán aquí cuando el backend los
-        proporcione.
-      </p>
-    </div>
   );
 }

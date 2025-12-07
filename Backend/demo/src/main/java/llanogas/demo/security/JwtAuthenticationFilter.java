@@ -30,10 +30,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String path = request.getServletPath();
 
-        // 🔓 1) NO interceptar las rutas públicas (login, etc.)
+        // 🔓 1) NO interceptar las rutas públicas
         if (path.startsWith("/api/auth/")
-                || path.startsWith("/h2-console")) {
-            // System.out.println("JWT FILTER SKIP: " + path);
+                || path.startsWith("/h2-console")
+                || path.startsWith("/api/reports")) {   // <<--- AÑADIDO
             filterChain.doFilter(request, response);
             return;
         }

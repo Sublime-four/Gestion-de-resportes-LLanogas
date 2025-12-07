@@ -25,13 +25,17 @@ public class SecurityConfig {
 
         http
                 .csrf(csrf -> csrf.disable())
-                .cors(cors -> { }) // simple, sin Customizer para evitar líos de import
+                .cors(cors -> { }) // CORS por defecto
                 .sessionManagement(sess ->
                         sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
                 .authorizeHttpRequests(auth -> auth
+                        // Endpoints públicos
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/h2-console/**").permitAll()
+                        // 👇 Abrimos el módulo de reportes para el front (GET/POST/PUT/DELETE)
+                        .requestMatchers("/api/reports/**").permitAll()
+                        // Todo lo demás sigue protegido por JWT
                         .anyRequest().authenticated()
                 );
 
