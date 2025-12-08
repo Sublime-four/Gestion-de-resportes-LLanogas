@@ -14,6 +14,9 @@ public interface ReportService {
 
     List<ReportDto> findAll();
 
-    // 👇 NUEVO: contrato para eliminar un reporte por id
     void deleteReport(Long id);
+
+    ReportDto updateReport(Long id, ReportCreateDto dto);
+
+    List<ReportDto> findByAssignedUser(Long userId);
 }

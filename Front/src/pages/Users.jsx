@@ -1,13 +1,6 @@
 // src/pages/Users.jsx
-// src/pages/Users.jsx
 import React, { useEffect, useMemo, useState } from "react";
 
-/**
- * Definición de roles según el documento:
- * - Rol
- * - Descripción
- * - Tareas en la solución
- */
 export const ROLE_DEFS = [
   {
     id: "admin",
@@ -44,41 +37,39 @@ export const ROLE_DEFS = [
 ];
 
 const ESTADO_OPTIONS = ["Activo", "Inactivo"];
-const USERS_STORAGE_KEY = "users";
+const API_BASE = "/api/users";
 
+function validateUser(form, users, editingId) {
+  if (!form.fullName.trim() || !form.email.trim()) {
+    return "Nombre completo y correo son obligatorios.";
+  }
 
-function formatDateTime(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d)) return "—";
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(form.email.trim())) {
+    return "El correo electrónico no es válido.";
+  }
+
+  // Evitar duplicado por correo (excepto el que edito)
+  const exists = users.some(
+    (u) =>
+      (u.email || "").trim().toLowerCase() ===
+        form.email.trim().toLowerCase() && u.id !== editingId
+  );
+
+  if (exists) {
+    return "Ya existe un usuario con ese correo.";
+  }
+
+  return null;
 }
 
 export default function Users() {
-const [users, setUsers] = useState(() => {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-});
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingError, setLoadingError] = useState(null);
 
-// persistencia
-useEffect(() => {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-  } catch {
-    // ignore
-  }
-}, [users]);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("Todos");
@@ -86,26 +77,59 @@ useEffect(() => {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
-  const [form, setForm] = useState({
-    userId: "",
+  const emptyForm = {
     fullName: "",
     email: "",
-    process: "",
-    position: "",
     roleId: "responsable_reportes",
     password: "",
     status: "Activo",
-  });
+  };
 
-  // Persistencia local
+  const [form, setForm] = useState(emptyForm);
+
+  // Cargar usuarios desde backend
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.setItem("users", JSON.stringify(users));
-    } catch {
-      // ignore
+    let isMounted = true;
+
+    async function fetchUsers() {
+  setLoading(true);
+  setLoadingError(null);
+  try {
+    const res = await fetch(API_BASE);
+    if (!res.ok) throw new Error("Error al cargar usuarios desde el servidor.");
+
+    const raw = await res.json();
+
+    if (!isMounted) return;
+
+    const data = Array.isArray(raw)
+      ? raw.map((u) => ({
+          id: u.id,
+       
+          fullName: u.fullName || u.name || "",
+          email: u.email,
+          roleId: u.roleId,          
+          status: u.status || "Activo",
+        }))
+      : [];
+
+    setUsers(data);
+  } catch (err) {
+    if (isMounted) {
+      setLoadingError(err.message || "Error inesperado al cargar usuarios.");
+      setUsers([]);
     }
-  }, [users]);
+  } finally {
+    if (isMounted) setLoading(false);
+  }
+}
+
+
+    fetchUsers();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Métricas de cabecera
   const metrics = useMemo(() => {
@@ -123,35 +147,32 @@ useEffect(() => {
   // Filtros
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return users.filter((u) => {
-      const matchesSearch =
-        q === "" ||
-        u.fullName.toLowerCase().includes(q) ||
-        u.userId.toLowerCase().includes(q) ||
-        (u.email || "").toLowerCase().includes(q) ||
-        (u.process || "").toLowerCase().includes(q);
 
-      const matchesRole =
-        roleFilter === "Todos" ? true : u.roleId === roleFilter;
+    return users
+      .filter((u) => {
+        const fullName = (u.fullName || "").toLowerCase();
+        const email = (u.email || "").toLowerCase();
 
-      const matchesStatus =
-        statusFilter === "Todos" ? true : u.status === statusFilter;
+        const matchesSearch =
+          q === "" || fullName.includes(q) || email.includes(q);
 
-      return matchesSearch && matchesRole && matchesStatus;
-    });
+        const matchesRole =
+          roleFilter === "Todos" ? true : u.roleId === roleFilter;
+
+        const matchesStatus =
+          statusFilter === "Todos" ? true : u.status === statusFilter;
+
+        return matchesSearch && matchesRole && matchesStatus;
+      })
+      .sort((a, b) =>
+        (a.fullName || "").localeCompare(b.fullName || "", "es", {
+          sensitivity: "base",
+        })
+      );
   }, [users, search, roleFilter, statusFilter]);
 
   const resetForm = () => {
-    setForm({
-      userId: "",
-      fullName: "",
-      email: "",
-      process: "",
-      position: "",
-      roleId: "responsable_reportes",
-      password: "",
-      status: "Activo",
-    });
+    setForm(emptyForm);
     setEditingId(null);
   };
 
@@ -162,105 +183,91 @@ useEffect(() => {
 
   const handleEdit = (user) => {
     setForm({
-      userId: user.userId || "",
       fullName: user.fullName || "",
       email: user.email || "",
-      process: user.process || "",
-      position: user.position || "",
       roleId: user.roleId || "responsable_reportes",
-      password: user.password || "",
+      password: "",
       status: user.status || "Activo",
     });
     setEditingId(user.id);
     setShowModal(true);
   };
 
-  const handleDelete = (id) => {
-    if (
-      !window.confirm(
-        "¿Eliminar este usuario? El historial de reportes asignados podría perder trazabilidad."
-      )
-    ) {
-      return;
+  const handleDelete = async (id) => {
+    if (!window.confirm("¿Eliminar este usuario?")) return;
+
+    setDeletingId(id);
+    try {
+      const res = await fetch(`${API_BASE}/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("No se pudo eliminar el usuario.");
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+    } catch (err) {
+      alert(err.message || "Error inesperado al eliminar el usuario.");
+    } finally {
+      setDeletingId(null);
     }
-    setUsers((prev) => prev.filter((u) => u.id !== id));
   };
 
   const handleFormChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleSave = (e) => {
+  const handleSave = async (e) => {
     e.preventDefault();
 
-    if (!form.userId.trim() || !form.fullName.trim() || !form.email.trim()) {
-      alert("ID usuario, nombre completo y correo son obligatorios.");
+    const errorMsg = validateUser(form, users, editingId);
+    if (errorMsg) {
+      alert(errorMsg);
       return;
     }
 
-    const ccRegex = /^\d+$/;
-    if (!ccRegex.test(form.userId.trim())) {
-      alert("El ID Usuario debe ser numérico (cédula).");
-      return;
+    const payload = {
+      fullName: form.fullName.trim(),
+      email: form.email.trim(),
+      roleId: form.roleId,
+      status: form.status,
+    };
+
+    if (form.password && form.password.trim()) {
+      payload.password = form.password.trim();
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(form.email.trim())) {
-      alert("El correo electrónico no es válido.");
-      return;
-    }
-
-    const timestamp = new Date().toISOString();
-
-    if (editingId) {
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === editingId
-            ? {
-                ...u,
-                ...form,
-                userId: form.userId.trim(),
-                fullName: form.fullName.trim(),
-                email: form.email.trim(),
-                process: form.process.trim(),
-                position: form.position.trim(),
-                updatedAt: timestamp,
-              }
-            : u
-        )
-      );
-    } else {
-      const exists = users.some(
-        (u) => u.userId.trim() === form.userId.trim()
-      );
-      if (exists) {
-        alert("Ya existe un usuario con ese ID. Usa otra cédula.");
-        return;
+    setSaving(true);
+    try {
+      if (editingId) {
+        const res = await fetch(`${API_BASE}/${editingId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("No se pudo actualizar el usuario.");
+        const updated = await res.json();
+        setUsers((prev) =>
+          prev.map((u) => (u.id === updated.id ? updated : u))
+        );
+      } else {
+        const res = await fetch(API_BASE, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("No se pudo crear el usuario.");
+        const created = await res.json();
+        setUsers((prev) => [...prev, created]);
       }
 
-      const newUser = {
-        id: Date.now(),
-        userId: form.userId.trim(),
-        fullName: form.fullName.trim(),
-        email: form.email.trim(),
-        process: form.process.trim(),
-        position: form.position.trim(),
-        roleId: form.roleId,
-        password: form.password, // para demo; en producción se encripta en backend
-        status: form.status,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      setUsers((prev) => [...prev, newUser]);
+      setShowModal(false);
+      resetForm();
+    } catch (err) {
+      alert(err.message || "Error inesperado al guardar el usuario.");
+    } finally {
+      setSaving(false);
     }
-
-    setShowModal(false);
-    resetForm();
   };
 
   return (
     <div className="space-y-6">
-      {/* Resumen ejecutivo de usuarios */}
+      {/* Resumen ejecutivo */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <MetricCard
           label="Usuarios registrados"
@@ -328,7 +335,7 @@ useEffect(() => {
           <div className="relative">
             <input
               type="text"
-              placeholder="Buscar por nombre, ID, correo o proceso..."
+              placeholder="Buscar por nombre o correo..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-9 w-72 rounded-full border border-slate-200 bg-slate-50 px-8 pr-3 text-xs text-slate-700 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -366,77 +373,90 @@ useEffect(() => {
         <table className="w-full text-xs text-left">
           <thead className="border-b border-slate-200 bg-slate-50/60 text-slate-500">
             <tr>
-              <th className="py-2 pl-4 font-medium">ID Usuario (Cédula)</th>
-              <th className="py-2 font-medium">Nombre completo</th>
+              <th className="py-2 pl-4 font-medium">Nombre completo</th>
               <th className="py-2 font-medium">Rol</th>
-              <th className="py-2 font-medium">Proceso</th>
-              <th className="py-2 font-medium">Cargo</th>
               <th className="py-2 font-medium">Correo electrónico</th>
               <th className="py-2 font-medium">Estado</th>
-              <th className="py-2 font-medium">Creado</th>
               <th className="py-2 pr-4 text-center font-medium">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filteredUsers.map((u) => {
-              const role = ROLE_DEFS.find((r) => r.id === u.roleId);
-
-              return (
-                <tr key={u.id} className="hover:bg-slate-50/70 text-slate-700">
-                  <td className="py-2.5 pl-4 pr-2 text-[11px] font-medium text-slate-900">
-                    {u.userId}
-                  </td>
-                  <td className="py-2.5 pr-2 text-[11px]">{u.fullName}</td>
-                  <td className="py-2.5 pr-2 text-[11px]">
-                    <RolePill role={role} />
-                  </td>
-                  <td className="py-2.5 pr-2 text-[11px]">
-                    {u.process || "—"}
-                  </td>
-                  <td className="py-2.5 pr-2 text-[11px]">
-                    {u.position || "—"}
-                  </td>
-                  <td className="py-2.5 pr-2 text-[11px] text-sky-700">
-                    {u.email}
-                  </td>
-                  <td className="py-2.5 pr-2 text-[11px]">
-                    <StatusPill status={u.status} />
-                  </td>
-                  <td className="py-2.5 pr-2 text-[11px] text-slate-500">
-                    {formatDateTime(u.createdAt)}
-                  </td>
-                  <td className="py-2.5 pr-4 text-center">
-                    <div className="inline-flex gap-1">
-                      <button
-                        onClick={() => handleEdit(u)}
-                        className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        onClick={() => handleDelete(u.id)}
-                        className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50"
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-
-            {filteredUsers.length === 0 && (
+            {loading && (
               <tr>
                 <td
-                  colSpan={9}
+                  colSpan={5}
                   className="py-6 text-center text-[11px] text-slate-500"
                 >
-                  No hay usuarios registrados o no coinciden con los filtros.
-                  Cuando conectes el backend, aquí se verán los usuarios
-                  corporativos con sus roles.
+                  Cargando usuarios desde el servidor...
                 </td>
               </tr>
             )}
+
+            {!loading && loadingError && (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="py-6 text-center text-[11px] text-red-500"
+                >
+                  {loadingError}
+                </td>
+              </tr>
+            )}
+
+            {!loading &&
+              !loadingError &&
+              filteredUsers.map((u) => {
+                const role = ROLE_DEFS.find((r) => r.id === u.roleId);
+                return (
+                  <tr
+                    key={u.id}
+                    className="hover:bg-slate-50/70 text-slate-700"
+                  >
+                    <td className="py-2.5 pl-4 pr-2 text-[11px]">
+                      {u.fullName}
+                    </td>
+                    <td className="py-2.5 pr-2 text-[11px]">
+                      <RolePill role={role} />
+                    </td>
+                    <td className="py-2.5 pr-2 text-[11px] text-sky-700">
+                      {u.email}
+                    </td>
+                    <td className="py-2.5 pr-2 text-[11px]">
+                      <StatusPill status={u.status} />
+                    </td>
+                    <td className="py-2.5 pr-4 text-center">
+                      <div className="inline-flex gap-1">
+                        <button
+                          onClick={() => handleEdit(u)}
+                          className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDelete(u.id)}
+                          disabled={deletingId === u.id}
+                          className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {deletingId === u.id ? "Eliminando..." : "Eliminar"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+            {!loading &&
+              !loadingError &&
+              filteredUsers.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="py-6 text-center text-[11px] text-slate-500"
+                  >
+                    No hay usuarios registrados o no coinciden con los filtros.
+                  </td>
+                </tr>
+              )}
           </tbody>
         </table>
       </div>
@@ -452,6 +472,7 @@ useEffect(() => {
           }}
           onSave={handleSave}
           isEditing={!!editingId}
+          saving={saving}
         />
       )}
     </div>
@@ -531,7 +552,7 @@ function RolePill({ role }) {
   );
 }
 
-function UserModal({ form, onChange, onClose, onSave, isEditing }) {
+function UserModal({ form, onChange, onClose, onSave, isEditing, saving }) {
   const selectedRole =
     ROLE_DEFS.find((r) => r.id === form.roleId) || ROLE_DEFS[0];
 
@@ -553,21 +574,8 @@ function UserModal({ form, onChange, onClose, onSave, isEditing }) {
           gestión de reportes.
         </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-slate-600">
-              ID Usuario (Cédula) *
-            </span>
-            <input
-              type="text"
-              value={form.userId}
-              onChange={(e) => onChange("userId", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Documento de identidad"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1 col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="flex flex-col gap-1 md:col-span-2">
             <span className="text-[11px] text-slate-600">
               Nombre completo *
             </span>
@@ -580,7 +588,7 @@ function UserModal({ form, onChange, onClose, onSave, isEditing }) {
             />
           </label>
 
-          <label className="flex flex-col gap-1 col-span-2 md:col-span-1">
+          <label className="flex flex-col gap-1 md:col-span-2">
             <span className="text-[11px] text-slate-600">
               Correo electrónico *
             </span>
@@ -589,29 +597,7 @@ function UserModal({ form, onChange, onClose, onSave, isEditing }) {
               value={form.email}
               onChange={(e) => onChange("email", e.target.value)}
               className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="usuario@llanogas.com"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-slate-600">Proceso</span>
-            <input
-              type="text"
-              value={form.process}
-              onChange={(e) => onChange("process", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Ej: Comercial, Operaciones, Jurídica"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-slate-600">Cargo</span>
-            <input
-              type="text"
-              value={form.position}
-              onChange={(e) => onChange("position", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Ej: Analista, Coordinador, Jefe"
+              placeholder="usuario@empresa.com"
             />
           </label>
 
@@ -645,16 +631,20 @@ function UserModal({ form, onChange, onClose, onSave, isEditing }) {
             </select>
           </label>
 
-          <label className="flex flex-col gap-1 col-span-2">
+          <label className="flex flex-col gap-1 md:col-span-2">
             <span className="text-[11px] text-slate-600">
-              Contraseña (demo)
+              Contraseña {isEditing ? "(opcional)" : "(demo)"}
             </span>
             <input
               type="password"
               value={form.password}
               onChange={(e) => onChange("password", e.target.value)}
               className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Se gestionará en backend en ambiente real"
+              placeholder={
+                isEditing
+                  ? "Déjalo vacío para no cambiar la contraseña"
+                  : "Se gestionará en backend en ambiente real"
+              }
             />
           </label>
         </div>
@@ -673,11 +663,6 @@ function UserModal({ form, onChange, onClose, onSave, isEditing }) {
               Tareas en la solución
             </p>
             <p>{selectedRole.tasks}</p>
-            <p className="mt-2 text-slate-500">
-              Más adelante estos roles se usarán para asignar responsables a
-              los reportes, configurar alertas y mostrar la sección de
-              &quot;Mis tareas pendientes&quot; por usuario.
-            </p>
           </div>
         </div>
 
@@ -686,14 +671,20 @@ function UserModal({ form, onChange, onClose, onSave, isEditing }) {
             type="button"
             onClick={onClose}
             className="px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-50"
+            disabled={saving}
           >
             Cancelar
           </button>
           <button
             type="submit"
-            className="px-3 py-1.5 rounded-lg bg-slate-900 text-[11px] font-medium text-white hover:bg-slate-800"
+            disabled={saving}
+            className="px-3 py-1.5 rounded-lg bg-slate-900 text-[11px] font-medium text-white hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {isEditing ? "Guardar cambios" : "Crear usuario"}
+            {saving
+              ? "Guardando..."
+              : isEditing
+              ? "Guardar cambios"
+              : "Crear usuario"}
           </button>
         </div>
       </form>

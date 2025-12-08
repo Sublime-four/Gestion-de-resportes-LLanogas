@@ -58,4 +58,31 @@ public class ReportServiceImpl implements ReportService {
         }
         reportRepository.deleteById(id);
     }
+
+
+    @Override
+    public ReportDto updateReport(Long id, ReportCreateDto dto) {
+        Report entity = reportRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Reporte no encontrado con id: " + id
+                ));
+
+        // delegamos la lógica de mapeo al mapper
+        reportMapper.updateEntityFromCreateDto(dto, entity);
+
+        Report saved = reportRepository.save(entity);
+        return reportMapper.toDto(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReportDto> findByAssignedUser(Long userId) {
+        List<Report> assigned = reportRepository
+                .findByResponsableElaboracionUserIdOrSupervisorCumplimientoUserId(
+                        userId,
+                        userId
+                );
+        return reportMapper.toDtoList(assigned);
+    }
 }

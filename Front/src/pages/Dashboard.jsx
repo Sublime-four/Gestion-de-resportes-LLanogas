@@ -1,5 +1,6 @@
 // src/pages/Dashboard.jsx
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   LineChart,
   Line,
@@ -17,7 +18,7 @@ import {
 } from "recharts";
 
 /* =========================================================
-   Helpers internos (antes venían de ../utils/dashboardHelpers)
+   Helpers internos (sincronizados con Reports.jsx)
    ========================================================= */
 
 // Parseo de fechas
@@ -59,14 +60,17 @@ function addMonthsSafe(date, months) {
   return d;
 }
 
-function computeNextDue(startDateStr, frecuencia) {
+// Cálculo de último y próximo vencimiento 
+function computePeriodDates(startDateStr, frecuencia) {
   const start = parseDateString(startDateStr);
-  if (!start) return null;
+  if (!start) return { lastDue: null, nextDue: null };
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  let next = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
 
   const freqMap = {
     Mensual: 1,
@@ -74,14 +78,29 @@ function computeNextDue(startDateStr, frecuencia) {
     Semestral: 6,
     Anual: 12,
   };
+
   const valid = validateFrequency(frecuencia) || "Mensual";
   const step = freqMap[valid];
 
-  while (next <= today) {
+  let current = new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate()
+  );
+  let next = addMonthsSafe(current, step);
+
+  while (next <= todayStart) {
+    current = new Date(next);
     next = addMonthsSafe(next, step);
-    if (next.getFullYear() > now.getFullYear() + 10) break;
+    if (next.getFullYear() > todayStart.getFullYear() + 10) break;
   }
-  return next;
+
+  if (current > todayStart) {
+    // aún no llega el primer vencimiento
+    return { lastDue: null, nextDue: current };
+  }
+
+  return { lastDue: current, nextDue: next };
 }
 
 function formatDate(d) {
@@ -100,7 +119,8 @@ function monthsUntil(date) {
   if (!d) return null;
   const now = new Date();
   return (
-    (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth())
+    (d.getFullYear() - now.getFullYear()) * 12 +
+    (d.getMonth() - now.getMonth())
   );
 }
 
@@ -123,7 +143,6 @@ function criticidadFromMonths(months) {
   return "Baja";
 }
 
-// Cargar reportes desde localStorage y calcular nextDue
 function loadReportsData() {
   try {
     const raw = localStorage.getItem("reportesCreados");
@@ -132,93 +151,214 @@ function loadReportsData() {
     return arr
       .map((rep) => {
         const freq = rep.frecuencia || "Mensual";
-        const nextDue = computeNextDue(rep.fechaInicio, freq);
-        return { ...rep, nextDue };
+        const baseDate = rep.fechaInicio || rep.fechaLimiteEnvio;
+
+        const { lastDue, nextDue } = computePeriodDates(baseDate, freq);
+
+        return {
+          ...rep,
+          lastDue,
+          nextDue,
+        };
       })
-      .filter((r) => r.nextDue != null)
-      .sort((a, b) => a.nextDue - b.nextDue);
+      .filter((r) => r.lastDue || r.nextDue)
+      .sort((a, b) => {
+        const da = a.nextDue || a.lastDue || new Date(8640000000000000);
+        const db = b.nextDue || b.lastDue || new Date(8640000000000000);
+        return da - db;
+      });
   } catch (e) {
     console.error("Error cargando reportes desde localStorage", e);
     return [];
   }
 }
 
-// Métricas globales
-function calculateMetrics(reports) {
+function getExtendedDueDate(originalDueDate) {
+  if (!originalDueDate) return null;
+  const d =
+    originalDueDate instanceof Date
+      ? new Date(originalDueDate)
+      : parseDateString(originalDueDate);
+  if (!d) return null;
+  d.setDate(d.getDate() + 2);
+  return d;
+}
+
+// fecha del primer acuse cargado
+function getFirstAcuseDate(reportId, attachmentsMap) {
+  const list = (attachmentsMap[reportId] || []).filter(
+    (a) => a.kind === "acuse"
+  );
+  if (!list.length) return null;
+
+  const timestamps = list
+    .map((a) => new Date(a.uploadedAt))
+    .filter((d) => !isNaN(d));
+  if (!timestamps.length) return null;
+
+  return new Date(Math.min(...timestamps.map((d) => d.getTime())));
+}
+
+/**
+ * Estados (alineados con Reports.jsx):
+ * - "Dentro del plazo"  -> hoy <= due y SIN acuse
+ * - "Pendiente"         -> hoy > due y hoy <= due+2 días y SIN acuse
+ * - "Enviado a tiempo"  -> acuseDate <= due
+ * - "Enviado tarde"     -> due < acuseDate <= due+2 días
+ * - "Vencido"           -> hoy > due+2 días y SIN acuse
+ */
+function getReportStatus(report, attachmentsMap, todayStart) {
+  const parseMaybeDate = (val) =>
+    val instanceof Date ? val : val ? parseDateString(val) : null;
+
+  let due = parseMaybeDate(report.lastDue) || parseMaybeDate(report.nextDue);
+  if (!due || isNaN(due)) return "Dentro del plazo";
+
+  const extended = getExtendedDueDate(due);
+  const acuseDate = getFirstAcuseDate(report.id, attachmentsMap);
+
+  // 1) Si hay acuse
+  if (acuseDate) {
+    if (acuseDate <= due) return "Enviado a tiempo";
+    if (acuseDate > due && acuseDate <= extended) return "Enviado tarde";
+    return "Vencido"; // acuse después de la ventana de gracia
+  }
+
+  // 2) Sin acuse
+  if (todayStart <= due) return "Dentro del plazo";
+  if (todayStart > due && todayStart <= extended) return "Pendiente";
+
+  return "Vencido";
+}
+
+// Métricas globales basadas en estados
+function calculateMetrics(reports, attachmentsMap) {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+
+  let countOnTime = 0;
+  let countInWindow = 0; // Dentro del plazo
+  let countPending = 0; // en ventana de gracia
+  let countLate = 0; // Enviado tarde
+  let countOverdue = 0;
+
+  reports.forEach((r) => {
+    const st = getReportStatus(r, attachmentsMap, todayStart);
+    switch (st) {
+      case "Enviado a tiempo":
+        countOnTime++;
+        break;
+      case "Dentro del plazo":
+        countInWindow++;
+        break;
+      case "Pendiente":
+        countPending++;
+        break;
+      case "Enviado tarde":
+        countLate++;
+        break;
+      case "Vencido":
+        countOverdue++;
+        break;
+      default:
+        break;
+    }
+  });
 
   const totalReports = reports.length;
-
-  const countOverdue = reports.filter((r) => {
-    if (!r.nextDue) return false;
-    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
-    if (!d) return false;
-    const extended = new Date(d);
-    extended.setDate(extended.getDate() + 2);
-    return extended < today;
-  }).length;
-
-  const countActive = reports.filter((r) => {
-    if (!r.nextDue) return false;
-    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
-    if (!d) return false;
-    return d > today;
-  }).length;
-
-  const countPending = Math.max(0, totalReports - countActive - countOverdue);
-
+  const countOnTimeOrWindow = countOnTime + countInWindow;
   const percentOnTime = totalReports
-    ? Math.round((countActive / totalReports) * 100)
+    ? Math.round((countOnTimeOrWindow / totalReports) * 100)
     : 0;
 
   return {
     totalReports,
-    countActive,
+    countOnTime,
+    countInWindow,
     countPending,
+    countLate,
     countOverdue,
     percentOnTime,
   };
 }
 
-// Próximos vencimientos
-function getUpcomingReports(reports, daysWindow = 15) {
+// Próximos vencimientos (solo no enviados)
+function getUpcomingReports(reports, attachmentsMap, daysWindow = 15) {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
 
   return reports
     .filter((r) => {
-      if (!r.nextDue) return false;
-      const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
-      if (!d) return false;
-      const diff = (d - today) / (1000 * 60 * 60 * 24);
-      return diff >= 0 && diff <= daysWindow;
+      const st = getReportStatus(r, attachmentsMap, todayStart);
+
+      // seguimos excluyendo enviados y vencidos
+      if (
+        st === "Enviado a tiempo" ||
+        st === "Enviado tarde" ||
+        st === "Vencido"
+      ) {
+        return false;
+      }
+
+      const due =
+        r.lastDue instanceof Date
+          ? r.lastDue
+          : r.lastDue
+          ? parseDateString(r.lastDue)
+          : r.nextDue instanceof Date
+          ? r.nextDue
+          : r.nextDue
+          ? parseDateString(r.nextDue)
+          : null;
+
+      if (!due) return false;
+
+      const diff = daysUntil(due);
+      if (diff === null || diff < 0) return false; // solo futuros
+
+      // si daysWindow es null, no limitamos por días
+      if (daysWindow == null) return true;
+
+      return diff <= daysWindow;
     })
-    .sort((a, b) => a.nextDue - b.nextDue);
+    .sort((a, b) => {
+      const da = a.lastDue || a.nextDue;
+      const db = b.lastDue || b.nextDue;
+      const daDiff = daysUntil(da);
+      const dbDiff = daysUntil(db);
+      return (daDiff ?? 99999) - (dbDiff ?? 99999);
+    });
 }
 
-// Riesgo por entidad
-function getRiskByEntity(reports) {
+
+// Riesgo por entidad basado en "Vencido"
+function getRiskByEntity(reports, attachmentsMap) {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
 
   const map = {};
 
   reports.forEach((r) => {
     const entidad = r.entidadControl || r.entity || "Otros";
-    if (!r.nextDue) return;
-    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
-    if (!d) return;
-
-    const extended = new Date(d);
-    extended.setDate(extended.getDate() + 2);
-    const isOverdue = extended < today;
+    const st = getReportStatus(r, attachmentsMap, todayStart);
 
     if (!map[entidad]) {
       map[entidad] = { entidad, total: 0, vencidos: 0 };
     }
     map[entidad].total += 1;
-    if (isOverdue) map[entidad].vencidos += 1;
+    if (st === "Vencido") map[entidad].vencidos += 1;
   });
 
   return Object.values(map)
@@ -229,10 +369,14 @@ function getRiskByEntity(reports) {
     .sort((a, b) => b.riesgo - a.riesgo || b.vencidos - a.vencidos);
 }
 
-// Tendencia de cumplimiento (últimos N meses)
-function getComplianceTrend(reports, monthsBack = 5) {
+// Nueva: tendencia de estados por mes (cumplidos, dentro, pendiente, vencido)
+function getStatusTrend(reports, attachmentsMap, monthsBack = 5) {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
   const start = new Date(now.getFullYear(), now.getMonth() - (monthsBack - 1), 1);
 
   const buckets = new Map();
@@ -243,91 +387,169 @@ function getComplianceTrend(reports, monthsBack = 5) {
     buckets.set(key, {
       mes: `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
       total: 0,
-      ontime: 0,
+      cumplidos: 0,  // seguimos contando por si acaso
+      dentro: 0,
+      pendiente: 0,
+      vencido: 0,
     });
   }
 
   reports.forEach((r) => {
-    if (!r.nextDue) return;
-    const d = r.nextDue instanceof Date ? r.nextDue : parseDateString(r.nextDue);
+    const due = r.lastDue || r.nextDue;
+    if (!due) return;
+
+    const d = due instanceof Date ? due : parseDateString(due);
     if (!d) return;
 
     const key = `${d.getFullYear()}-${d.getMonth()}`;
     const bucket = buckets.get(key);
     if (!bucket) return;
 
+    const st = getReportStatus(r, attachmentsMap, todayStart);
+
     bucket.total += 1;
 
-    const extended = new Date(d);
-    extended.setDate(extended.getDate() + 2);
-    const isOverdue = extended < today;
-    if (!isOverdue) bucket.ontime += 1;
+    switch (st) {
+      case "Enviado a tiempo":
+      case "Enviado tarde":
+        bucket.cumplidos += 1;
+        break;
+      case "Dentro del plazo":
+        bucket.dentro += 1;
+        break;
+      case "Pendiente":
+        bucket.pendiente += 1;
+        break;
+      case "Vencido":
+        bucket.vencido += 1;
+        break;
+      default:
+        break;
+    }
   });
 
-  return Array.from(buckets.values()).map((b) => ({
-    mes: b.mes,
-    cumplimiento: b.total ? Math.round((b.ontime / b.total) * 100) : 0,
-  }));
+  return Array.from(buckets.values()).map((b) => {
+    const t = b.total || 1;
+    return {
+      mes: b.mes,
+      total: b.total,
+      dentroPct: b.total ? Math.round((b.dentro / t) * 100) : 0,
+      pendientePct: b.total ? Math.round((b.pendiente / t) * 100) : 0,
+      vencidoPct: b.total ? Math.round((b.vencido / t) * 100) : 0,
+    };
+  });
+}
+
+
+// Distribución para el pie chart
+function buildStatusDistribution(calc) {
+  const dist = [
+    { name: "Dentro del plazo", value: calc.countInWindow },
+    { name: "Pendientes", value: calc.countPending },
+    { name: "Enviado a tiempo", value: calc.countOnTime },
+    { name: "Enviado tarde", value: calc.countLate },
+    { name: "Vencidos", value: calc.countOverdue },
+  ];
+  return dist.filter((x) => x.value > 0);
 }
 
 /* =========================================================
    Componente Dashboard
    ========================================================= */
 
-const STATUS_COLORS = ["#16a34a", "#f59e0b", "#0f172a", "#dc2626"];
+// Colores más fuertes por estado (para el pie)
+const STATUS_COLORS = {
+  "Dentro del plazo": "#0284c7", 
+  Pendientes: "#f97316", 
+  "Enviado a tiempo": "#16a34a", 
+  "Enviado tarde": "#eab308", 
+  Vencidos: "#dc2626", 
+};
 
 export default function Dashboard() {
+  const navigate = useNavigate();
+
   const [reports, setReports] = useState([]);
   const [metrics, setMetrics] = useState({
     totalReports: 0,
-    countActive: 0,
+    countOnTime: 0,
+    countInWindow: 0,
     countPending: 0,
+    countLate: 0,
     countOverdue: 0,
     percentOnTime: 0,
   });
   const [upcomingReports, setUpcomingReports] = useState([]);
   const [riskByEntity, setRiskByEntity] = useState([]);
-  const [complianceTrend, setComplianceTrend] = useState([]);
+  const [statusTrend, setStatusTrend] = useState([]); // ← nueva serie multi-estado
   const [statusDistribution, setStatusDistribution] = useState([]);
   const [lastRefresh, setLastRefresh] = useState(null);
+
+  // attachmentsMap se comparte con Reports (solo lectura aquí)
+  const [attachmentsMap] = useState(() => {
+    try {
+      const raw = localStorage.getItem("reportAttachments");
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  });
 
   useEffect(() => {
     const loadData = () => {
       const allReports = loadReportsData();
       setReports(allReports);
 
-      const calc = calculateMetrics(allReports);
+      const calc = calculateMetrics(allReports, attachmentsMap);
       setMetrics(calc);
 
-      const upcoming = getUpcomingReports(allReports, 15);
+      const upcoming = getUpcomingReports(allReports, attachmentsMap, null);
       setUpcomingReports(upcoming);
 
-      const riskData = getRiskByEntity(allReports);
+      const riskRaw = getRiskByEntity(allReports, attachmentsMap);
+
+      const MAX_BARS = 10; // número máximo de barras visibles
+      let riskData = riskRaw;
+
+      if (riskRaw.length > MAX_BARS) {
+        const top = riskRaw.slice(0, MAX_BARS - 1); // top 9
+        const rest = riskRaw.slice(MAX_BARS - 1); // el resto
+
+        const aggTotal = rest.reduce((acc, r) => acc + r.total, 0);
+        const aggVenc = rest.reduce((acc, r) => acc + r.vencidos, 0);
+
+        const agg = {
+          entidad: "Otros",
+          total: aggTotal,
+          vencidos: aggVenc,
+          riesgo: aggTotal ? Math.round((aggVenc / aggTotal) * 100) : 0,
+        };
+
+        riskData = [...top, agg];
+      }
+
       setRiskByEntity(riskData);
 
-      const trend = getComplianceTrend(allReports, 5);
-      setComplianceTrend(trend);
+      //tendencia por estado
+      const trend = getStatusTrend(allReports, attachmentsMap, 3);
+      setStatusTrend(trend);
 
-      const distribution = [
-        { name: "A tiempo", value: calc.countActive },
-        { name: "Pendientes", value: calc.countPending },
-        { name: "Vencidos", value: calc.countOverdue },
-      ].filter((x) => x.value > 0);
+      const distribution = buildStatusDistribution(calc);
       setStatusDistribution(distribution);
 
       setLastRefresh(new Date());
     };
 
     loadData();
-    // Si luego conectas backend, aquí reemplazas loadReportsData por un fetch.
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [attachmentsMap]);
 
   const nextVencimiento = upcomingReports[0];
-  const diasParaVencimiento = nextVencimiento
-    ? daysUntil(nextVencimiento.nextDue)
-    : null;
+  const baseDueNext =
+    nextVencimiento && (nextVencimiento.lastDue || nextVencimiento.nextDue);
+  const diasParaVencimiento = baseDueNext ? daysUntil(baseDueNext) : null;
+
   const entidadConMasRiesgo = riskByEntity[0]?.entidad || "-";
   const entidadesConRiesgo = riskByEntity.filter(
     (e) => e.vencidos > 0 || e.riesgo > 0
@@ -343,7 +565,8 @@ export default function Dashboard() {
             Tablero regulatorio
           </h1>
           <p className="text-xs text-slate-500">
-            Visibilidad ejecutiva sobre vencimientos, cumplimiento y riesgo por entidad.
+            Visibilidad ejecutiva sobre vencimientos, cumplimiento y riesgo por
+            entidad.
           </p>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
@@ -369,7 +592,13 @@ export default function Dashboard() {
         <KpiCard
           title="% Cumplimiento a tiempo"
           value={`${metrics.percentOnTime}%`}
-          subtitle={`${metrics.countActive} de ${metrics.totalReports} reportes`}
+          subtitle={
+            hasData
+              ? `${metrics.countOnTime + metrics.countInWindow} de ${
+                  metrics.totalReports
+                } reportes a tiempo o dentro del plazo`
+              : "Sin datos de cumplimiento"
+          }
           status={hasData ? "Dinámico" : "Sin datos"}
         />
         <KpiCard
@@ -383,7 +612,11 @@ export default function Dashboard() {
         <KpiCard
           title="Reportes totales"
           value={metrics.totalReports}
-          subtitle={`${metrics.countActive} a tiempo, ${metrics.countPending} pendientes`}
+          subtitle={
+            hasData
+              ? `${metrics.countInWindow} dentro del plazo, ${metrics.countPending} pendientes, ${metrics.countLate} enviados tarde`
+              : "Configura reportes en el módulo de portafolio"
+          }
           variant="neutral"
         />
         <KpiCard
@@ -400,21 +633,26 @@ export default function Dashboard() {
 
       {/* Charts row */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Cumplimiento mensual */}
+        {/* Evolución de estados */}
         <div className="xl:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col">
           <HeaderCard
-            title="Evolución de cumplimiento"
-            subtitle="Porcentaje de reportes enviados a tiempo por mes"
-            pill="Últimos 5 meses"
+            title="Evolución de estados"
+            subtitle="Porcentaje de reportes por estado ( Dentro del plazo, pendiente, vencido)"
+            pill="Últimos 3 meses"
           />
           <div className="mt-4 h-64 flex items-center justify-center">
-            {complianceTrend.length === 0 ? (
+            {statusTrend.length === 0 ? (
               <p className="text-[11px] text-slate-500">
-                Aún no hay suficientes datos para graficar la tendencia de cumplimiento.
+                Aún no hay suficientes datos para graficar la tendencia.
               </p>
             ) : (
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <LineChart data={complianceTrend} margin={{ left: -24 }}>
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                minWidth={0}
+                minHeight={0}
+              >
+                <LineChart data={statusTrend} margin={{ left: -24 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
                   <YAxis unit="%" domain={[0, 100]} tick={{ fontSize: 11 }} />
@@ -424,12 +662,64 @@ export default function Dashboard() {
                       borderRadius: 12,
                       borderColor: "#e5e7eb",
                     }}
+                    formatter={(value, name, { payload }) => {
+                      // value ya viene como porcentaje
+                      const mapLabel = {
+                        cumplidosPct: "Cumplidos",
+                        dentroPct: "Dentro del plazo",
+                        pendientePct: "Pendiente",
+                        vencidoPct: "Vencido",
+                      };
+                      const prettyName = mapLabel[name] || name;
+                      return [`${value}%`, prettyName];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      const p = payload && payload[0]?.payload;
+                      if (!p) return label;
+                      return `${label} · Total: ${p.total}`;
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: 11 }}
+                    formatter={(value) => {
+                      const map = {
+                        cumplidosPct: "Cumplidos",
+                        dentroPct: "Dentro del plazo",
+                        pendientePct: "Pendiente",
+                        vencidoPct: "Vencido",
+                      };
+                      return map[value] || value;
+                    }}
                   />
                   <Line
                     type="monotone"
-                    dataKey="cumplimiento"
-                    stroke="#0f766e"
-                    strokeWidth={2.4}
+                    dataKey="cumplidosPct"
+                    stroke="#16a34a"
+                    strokeWidth={2.2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="dentroPct"
+                    stroke="#0284c7"
+                    strokeWidth={2.2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="pendientePct"
+                    stroke="#f97316"
+                    strokeWidth={2.2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="vencidoPct"
+                    stroke="#dc2626"
+                    strokeWidth={2.2}
                     dot={{ r: 3 }}
                     activeDot={{ r: 5 }}
                   />
@@ -449,11 +739,16 @@ export default function Dashboard() {
             <div className="h-48 flex items-center justify-center">
               {statusDistribution.length === 0 ? (
                 <p className="text-[11px] text-slate-500">
-                  Aún no hay distribución disponible. Crea reportes en el módulo de
-                  portafolio.
+                  Aún no hay distribución disponible. Crea reportes en el módulo
+                  de portafolio.
                 </p>
               ) : (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <ResponsiveContainer
+                  width="100%"
+                  height="100%"
+                  minWidth={0}
+                  minHeight={0}
+                >
                   <PieChart>
                     <Pie
                       data={statusDistribution}
@@ -466,7 +761,7 @@ export default function Dashboard() {
                       {statusDistribution.map((entry, index) => (
                         <Cell
                           key={`cell-${index}`}
-                          fill={STATUS_COLORS[index % STATUS_COLORS.length]}
+                          fill={STATUS_COLORS[entry.name] || "#64748b"}
                         />
                       ))}
                     </Pie>
@@ -514,7 +809,10 @@ export default function Dashboard() {
                   : "Configura reportes para ver vencimientos"
               }
             />
-            <button className="text-[11px] px-2.5 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50">
+            <button
+              className="text-[11px] px-2.5 py-1.5 rounded-full border border-slate-200 hover:bg-slate-50"
+              onClick={() => navigate("/reports")}
+            >
               Ver todos
             </button>
           </div>
@@ -530,16 +828,19 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {upcomingReports.slice(0, 4).map((r) => (
-                <ReportRow
-                  key={r.id}
-                  name={r.nombreReporte}
-                  entity={r.entidadControl || "-"}
-                  owner={r.responsableElaboracionName || "-"}
-                  due={formatDate(r.nextDue)}
-                  days={daysUntil(r.nextDue)}
-                />
-              ))}
+              {upcomingReports.slice(0, 10).map((r) => {
+                const dueDate = r.lastDue || r.nextDue;
+                return (
+                  <ReportRow
+                    key={r.id}
+                    name={r.nombreReporte}
+                    entity={r.entidadControl || "-"}
+                    owner={r.responsableElaboracionName || "-"}
+                    due={formatDate(dueDate)}
+                    days={daysUntil(dueDate)}
+                  />
+                );
+              })}
               {upcomingReports.length === 0 && (
                 <tr>
                   <td
@@ -569,10 +870,16 @@ export default function Dashboard() {
             <div className="mt-4 h-40 flex items-center justify-center">
               {riskByEntity.length === 0 ? (
                 <p className="text-[11px] text-slate-500">
-                  Aún no hay suficientes datos para calcular el riesgo por entidad.
+                  Aún no hay suficientes datos para calcular el riesgo por
+                  entidad.
                 </p>
               ) : (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <ResponsiveContainer
+                  width="100%"
+                  height="100%"
+                  minWidth={0}
+                  minHeight={0}
+                >
                   <BarChart data={riskByEntity} barSize={16}>
                     <CartesianGrid
                       strokeDasharray="3 3"
@@ -623,12 +930,13 @@ export default function Dashboard() {
                 <span className="text-slate-600">Entidad con más riesgo:</span>
                 <span className="font-medium">{entidadConMasRiesgo}</span>
               </li>
-              <li className="flex justify-between items-center p-2 bg-slate-50 rounded">
-                <span className="text-slate-600">Portafolio total:</span>
-                <span className="font-medium">
-                  {metrics.totalReports} reportes
-                </span>
-              </li>
+             <li className="flex justify-between items-center p-2 bg-slate-50 rounded">
+  <span className="text-slate-600">Portafolio total:</span>
+  <span className="font-medium">
+    {metrics.totalReports} reportes
+  </span>
+</li>
+
               <li className="flex justify-between items-center p-2 bg-slate-50 rounded">
                 <span className="text-slate-600">Tasa de cumplimiento:</span>
                 <span
@@ -737,27 +1045,5 @@ function ReportRow({ name, entity, owner, due, days }) {
         {days !== null ? `${days}d` : "-"}
       </td>
     </tr>
-  );
-}
-
-function TimelineItem({ time, title, detail, badge }) {
-  return (
-    <li className="flex gap-3">
-      <div className="pt-1">
-        <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
-      </div>
-      <div className="flex-1">
-        <div className="flex items-center justify-between gap-2 mb-0.5">
-          <p className="text-[11px] font-semibold text-slate-800">{title}</p>
-          {badge && (
-            <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
-              {badge}
-            </span>
-          )}
-        </div>
-        <p className="text-[11px] text-slate-500">{detail}</p>
-        <p className="text-[10px] text-slate-400 mt-0.5">{time}</p>
-      </div>
-    </li>
   );
 }

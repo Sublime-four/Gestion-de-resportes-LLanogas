@@ -2,9 +2,7 @@ package llanogas.demo.modules.reports.dto;
 
 import java.time.LocalDate;
 
-/**
- * DTO de salida hacia el frontend.
- */
+
 public class ReportDto {
 
     private Long id;
@@ -26,6 +24,10 @@ public class ReportDto {
     private String baseLegal;
     private LocalDate fechaInicio;
     private LocalDate fechaLimiteEnvio;
+
+    // 🔹 NUEVO: asignación a usuarios (para Mis Tareas)
+    private Long responsableElaboracionUserId;
+    private Long supervisorCumplimientoUserId;
 
     // Getters / setters
     public Long getId() { return id; }
@@ -84,4 +86,18 @@ public class ReportDto {
 
     public LocalDate getFechaLimiteEnvio() { return fechaLimiteEnvio; }
     public void setFechaLimiteEnvio(LocalDate fechaLimiteEnvio) { this.fechaLimiteEnvio = fechaLimiteEnvio; }
+
+    public Long getResponsableElaboracionUserId() {
+        return responsableElaboracionUserId;
+    }
+    public void setResponsableElaboracionUserId(Long responsableElaboracionUserId) {
+        this.responsableElaboracionUserId = responsableElaboracionUserId;
+    }
+
+    public Long getSupervisorCumplimientoUserId() {
+        return supervisorCumplimientoUserId;
+    }
+    public void setSupervisorCumplimientoUserId(Long supervisorCumplimientoUserId) {
+        this.supervisorCumplimientoUserId = supervisorCumplimientoUserId;
+    }
 }

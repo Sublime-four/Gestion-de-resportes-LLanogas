@@ -1,28 +1,99 @@
 // src/pages/Calendar.jsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import useAuth from "../hooks/useAuth";
 
 const STATUS_BADGE = {
-  "En proceso": "bg-amber-50 text-amber-800",
-  Pendiente: "bg-red-50 text-red-700",
-  "En elaboración": "bg-sky-50 text-sky-800",
-  "En revisión interna": "bg-indigo-50 text-indigo-800",
-  Enviado: "bg-emerald-50 text-emerald-800",
+  "Dentro del plazo": "bg-sky-50 text-sky-800",
+  Pendiente: "bg-amber-50 text-amber-800",
+  Vencido: "bg-red-50 text-red-700",
 };
 
 const CRIT_BADGE = {
-  Alto: "bg-red-100 text-red-800",
-  Medio: "bg-amber-100 text-amber-800",
-  Bajo: "bg-emerald-100 text-emerald-800",
+  Crítica: "bg-red-100 text-red-800",
+  Alta: "bg-amber-100 text-amber-800",
+  Media: "bg-sky-100 text-sky-800",
+  Baja: "bg-emerald-100 text-emerald-800",
 };
 
-const ROLE_OPTIONS = [
-  "Administrador del sistema",
-  "Supervisor de cumplimiento",
-  "Responsable de los reportes",
-  "Usuario de consulta / Auditoría",
-];
+// ===== Helpers de fechas / frecuencia =====
 
-// Utils
+function parseDateString(dateStr) {
+  if (!dateStr) return null;
+  const iso = new Date(dateStr);
+  if (!isNaN(iso)) return iso;
+  const parts = String(dateStr).split("/");
+  if (parts.length === 3) {
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const y = parseInt(parts[2], 10);
+    const dObj = new Date(y, m, d);
+    return isNaN(dObj) ? null : dObj;
+  }
+  return null;
+}
+
+function validateFrequency(f) {
+  if (!f && f !== "") return null;
+  const s = String(f).trim().toLowerCase();
+  if (s === "mensual" || s === "monthly") return "Mensual";
+  if (s === "trimestral") return "Trimestral";
+  if (s === "semestral") return "Semestral";
+  if (s === "anual" || s === "annual") return "Anual";
+  return null;
+}
+
+function addMonthsSafe(date, months) {
+  const d = new Date(date.getTime());
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+  if (d.getDate() !== day) {
+    d.setDate(0);
+  }
+  return d;
+}
+
+function computePeriodDates(startDateStr, frecuencia) {
+  const start = parseDateString(startDateStr);
+  if (!start) return { lastDue: null, nextDue: null };
+
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
+
+  const freqMap = {
+    Mensual: 1,
+    Trimestral: 3,
+    Semestral: 6,
+    Anual: 12,
+  };
+
+  const valid = validateFrequency(frecuencia) || "Mensual";
+  const step = freqMap[valid] ?? 1;
+
+  let current = new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate()
+  );
+  let next = addMonthsSafe(current, step);
+
+  while (next <= todayStart) {
+    current = new Date(next);
+    next = addMonthsSafe(next, step);
+    if (next.getFullYear() > todayStart.getFullYear() + 10) break;
+  }
+
+  if (current > todayStart) {
+    return { lastDue: null, nextDue: current };
+  }
+
+  return { lastDue: current, nextDue: next };
+}
+
 function parseDate(dateStr) {
   return new Date(dateStr);
 }
@@ -59,24 +130,53 @@ function isInRange(date, currentMonth, range) {
   return date.getFullYear() === currentMonth.getFullYear();
 }
 
+// criticidad basada en días a la fecha de vencimiento (para badges, no filtro)
+function criticidadFromDueDate(dueDate) {
+  if (!dueDate) return "Baja";
+
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
+
+  const diffDays = Math.round(
+    (dueDate.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  if (diffDays <= 30) return "Crítica";
+  if (diffDays <= 180) return "Alta";
+  if (diffDays <= 300) return "Media";
+  return "Baja";
+}
+
+// helper de estado (Pendiente / Vencido / Dentro del plazo)
+function getCalendarStatus(dueDate) {
+  if (!dueDate) return "Dentro del plazo";
+
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
+
+  const due = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+  const extended = new Date(due);
+  extended.setDate(extended.getDate() + 2);
+
+  if (todayStart <= due) return "Dentro del plazo";
+  if (todayStart > due && todayStart <= extended) return "Pendiente";
+  return "Vencido";
+}
+
 export default function Calendar() {
+  const { user, token } = useAuth();
+  const navigate = useNavigate();
   const today = new Date();
 
-  /**
-   * 👉 Cuando conectes backend, cada evento debería venir más o menos así:
-   * {
-   *   id: 'SUI-T1-2025-01',
-   *   datetime: '2025-01-15T23:59:00',
-   *   title: 'SUI - Reporte T1',
-   *   entity: 'SUI',
-   *   status: 'Pendiente' | 'En elaboración' | 'Enviado' | ...,
-   *   criticality: 'Alto' | 'Medio' | 'Bajo',
-   *   responsible: 'Juan Pérez',
-   *   roleView: 'Responsable de los reportes',
-   *   frequency: 'Mensual' | 'Trimestral' | 'Anual',
-   * }
-   */
-  const [events] = useState([]); // TODO: poblar desde API
+  const [events, setEvents] = useState([]);
 
   const [currentMonth, setCurrentMonth] = useState(
     new Date(today.getFullYear(), today.getMonth(), 1)
@@ -84,22 +184,132 @@ export default function Calendar() {
   const [selectedDate, setSelectedDate] = useState(today);
   const [rangeFilter, setRangeFilter] = useState("month"); // month | 3months | year
 
-  // filtros por campos del evento
-  const [entityFilter, setEntityFilter] = useState("all"); // all | <entity>
-  const [roleFilter, setRoleFilter] = useState("all"); // all | role
-  const [statusFilter, setStatusFilter] = useState("all"); // all | status
-  const [frequencyFilter, setFrequencyFilter] = useState("all"); // all | Mensual | ...
-  const [responsibleFilter, setResponsibleFilter] = useState("all"); // all | nombre
-  const [criticalityFilter, setCriticalityFilter] = useState("all"); // all | Alto | Medio | Bajo
-
-  const [selectedEvent, setSelectedEvent] = useState(null);
+  // filtros
+  const [entityFilter, setEntityFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [frequencyFilter, setFrequencyFilter] = useState("all");
+  const [responsibleFilter, setResponsibleFilter] = useState("all");
 
   const monthLabel = currentMonth.toLocaleDateString("es-CO", {
     month: "long",
     year: "numeric",
   });
 
-  // Entidades disponibles según los eventos
+  // Usuario / rol para visibilidad
+  const fullName = user?.name || user?.fullName || user?.email || "Usuario";
+  const userId = user?.id || user?.userId || user?.email;
+  const roleId = user?.roleId || user?.role;
+  const isAdmin = roleId === "admin";
+  const userNameKey = (user?.name || fullName).trim().toLowerCase();
+  const userEmailKey = (user?.email || "").trim().toLowerCase();
+
+  // Cargar reportes → eventos
+  useEffect(() => {
+    if (!user) return;
+
+    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+
+    const loadReportsForCalendar = async () => {
+      try {
+        const resp = await fetch("http://localhost:8080/api/reports", {
+          headers: {
+            ...authHeaders,
+          },
+        });
+        if (!resp.ok) throw new Error("Error al cargar reportes para calendario");
+
+        const data = await resp.json();
+
+        const mapped = (Array.isArray(data) ? data : []).flatMap((rep) => {
+          // 1) calcular fecha vencimiento
+          let dueDate = null;
+
+          if (rep.fechaLimiteEnvio) {
+            dueDate = parseDateString(rep.fechaLimiteEnvio);
+          } else if (rep.fechaInicio && rep.frecuencia) {
+            const period = computePeriodDates(rep.fechaInicio, rep.frecuencia);
+            dueDate = period.nextDue;
+          }
+
+          if (!dueDate || isNaN(dueDate)) return [];
+
+          // 2) visibilidad por usuario (solo admin ve todo)
+          const assignedById =
+            rep.responsableElaboracionUserId || rep.supervisorCumplimientoUserId;
+
+          if (!isAdmin) {
+            const isOwnerById =
+              assignedById &&
+              userId &&
+              String(assignedById) === String(userId);
+
+            const respElabName = (rep.responsableElaboracionName || "")
+              .trim()
+              .toLowerCase();
+            const respSupName = (rep.responsableSupervisionName || "")
+              .trim()
+              .toLowerCase();
+            const respElabEmail = (rep.emailResponsableEnvio || "")
+              .trim()
+              .toLowerCase();
+            const respSupEmail = (rep.emailLiderSeguimiento || "")
+              .trim()
+              .toLowerCase();
+
+            const isOwnerByIdentity =
+              (userNameKey &&
+                (userNameKey === respElabName ||
+                  userNameKey === respSupName)) ||
+              (userEmailKey &&
+                (userEmailKey === respElabEmail ||
+                  userEmailKey === respSupEmail));
+
+            if (!isOwnerById && !isOwnerByIdentity) {
+              return [];
+            }
+          }
+
+          // fijamos hora 23:59 local
+          const due = new Date(
+            dueDate.getFullYear(),
+            dueDate.getMonth(),
+            dueDate.getDate(),
+            23,
+            59,
+            0
+          );
+
+          const criticality = criticidadFromDueDate(due);
+          const status = getCalendarStatus(due);
+
+          return [
+            {
+              id: rep.id,
+              reportId: rep.id,
+              datetime: due.toISOString(),
+              title: rep.nombreReporte || rep.name || "Reporte sin nombre",
+              entity: rep.entidadControl || "—",
+              status,
+              criticality,
+              responsible:
+                rep.responsableElaboracionName ||
+                rep.emailResponsableEnvio ||
+                "—",
+              frequency: rep.frecuencia || "Mensual",
+            },
+          ];
+        });
+
+        setEvents(mapped);
+      } catch (err) {
+        console.error("Error cargando eventos de calendario", err);
+      }
+    };
+
+    loadReportsForCalendar();
+  }, [token, user, userId, isAdmin, userNameKey, userEmailKey]);
+
+  // Opciones para filtros
   const entityOptions = useMemo(() => {
     const uniques = Array.from(new Set(events.map((e) => e.entity))).filter(
       Boolean
@@ -107,15 +317,6 @@ export default function Calendar() {
     return uniques;
   }, [events]);
 
-  // Roles disponibles (por si quieres derivarlos desde backend)
-  const availableRoles = useMemo(() => {
-    const uniques = Array.from(new Set(events.map((e) => e.roleView))).filter(
-      Boolean
-    );
-    return uniques.length ? uniques : ROLE_OPTIONS;
-  }, [events]);
-
-  // Frecuencias disponibles
   const frequencyOptions = useMemo(() => {
     const uniques = Array.from(new Set(events.map((e) => e.frequency))).filter(
       Boolean
@@ -123,7 +324,6 @@ export default function Calendar() {
     return uniques;
   }, [events]);
 
-  // Responsables disponibles
   const responsibleOptions = useMemo(() => {
     const uniques = Array.from(
       new Set(events.map((e) => e.responsible))
@@ -131,36 +331,19 @@ export default function Calendar() {
     return uniques;
   }, [events]);
 
-  // Criticidades disponibles (si backend trae otras, se agregan)
-  const criticalityOptions = useMemo(() => {
-    const uniques = Array.from(
-      new Set(events.map((e) => e.criticality))
-    ).filter(Boolean);
-    // baseline
-    const base = ["Alto", "Medio", "Bajo"];
-    const extra = uniques.filter((u) => !base.includes(u));
-    return [...base, ...extra];
-  }, [events]);
-
-  // Eventos filtrados por rango / entidad / rol / estado / frecuencia / responsable / criticidad
+  // Eventos filtrados
   const filteredEvents = useMemo(() => {
     return events.filter((e) => {
       const d = parseDate(e.datetime);
 
       if (!isInRange(d, currentMonth, rangeFilter)) return false;
       if (entityFilter !== "all" && e.entity !== entityFilter) return false;
-      if (roleFilter !== "all" && e.roleView !== roleFilter) return false;
       if (statusFilter !== "all" && e.status !== statusFilter) return false;
       if (frequencyFilter !== "all" && e.frequency !== frequencyFilter)
         return false;
       if (
         responsibleFilter !== "all" &&
         (e.responsible || "") !== responsibleFilter
-      )
-        return false;
-      if (
-        criticalityFilter !== "all" &&
-        (e.criticality || "") !== criticalityFilter
       )
         return false;
 
@@ -171,14 +354,12 @@ export default function Calendar() {
     currentMonth,
     rangeFilter,
     entityFilter,
-    roleFilter,
     statusFilter,
     frequencyFilter,
     responsibleFilter,
-    criticalityFilter,
   ]);
 
-  // Días a mostrar en la grilla del mes
+  // Días en la grilla
   const monthDays = useMemo(() => {
     const days = [];
     const startOfMonth = new Date(
@@ -208,7 +389,7 @@ export default function Calendar() {
     return days;
   }, [currentMonth]);
 
-  // Eventos por día (con filtros aplicados)
+  // eventos por día
   const eventsByDay = useMemo(() => {
     const map = {};
     filteredEvents.forEach((e) => {
@@ -223,7 +404,7 @@ export default function Calendar() {
   const selectedKey = selectedDate.toISOString().slice(0, 10);
   const eventsForSelectedDay = eventsByDay[selectedKey] || [];
 
-  // Próximos vencimientos (filtrados)
+  // Próximos vencimientos
   const upcomingEvents = useMemo(() => {
     const now = new Date();
     return [...filteredEvents]
@@ -232,11 +413,11 @@ export default function Calendar() {
       .slice(0, 4);
   }, [filteredEvents]);
 
-  // Métricas del periodo (sobre eventos filtrados)
+  // Métricas
   const metrics = useMemo(() => {
     const total = filteredEvents.length;
     const critical = filteredEvents.filter(
-      (e) => e.criticality === "Alto"
+      (e) => e.criticality === "Crítica"
     ).length;
     const pending = filteredEvents.filter(
       (e) => e.status === "Pendiente"
@@ -250,6 +431,7 @@ export default function Calendar() {
     return { total, critical, pending, thisWeek };
   }, [filteredEvents, today]);
 
+  // navegación de mes/año
   const handlePrevMonth = () => {
     setCurrentMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
   };
@@ -264,18 +446,92 @@ export default function Calendar() {
     setSelectedDate(today);
     setRangeFilter("month");
     setEntityFilter("all");
-    setRoleFilter("all");
     setStatusFilter("all");
     setFrequencyFilter("all");
     setResponsibleFilter("all");
-    setCriticalityFilter("all");
   };
+
+  const handleChangeMonth = (e) => {
+    const newMonth = Number(e.target.value);
+    setCurrentMonth((m) => new Date(m.getFullYear(), newMonth, 1));
+  };
+
+  const handleChangeYear = (e) => {
+    const newYear = Number(e.target.value);
+    setCurrentMonth((m) => new Date(newYear, m.getMonth(), 1));
+  };
+
+  const goToReportDetail = (event) => {
+    if (!event || !event.id) return;
+    navigate(`/reports?reportId=${encodeURIComponent(event.id)}`);
+  };
+
+  if (!user) {
+    return (
+      <div className="rounded-2xl bg-white border border-slate-200 p-6 text-xs">
+        <p className="text-sm font-semibold text-slate-900 mb-1">
+          Calendario de vencimientos
+        </p>
+        <p className="text-[11px] text-slate-500">
+          No hay usuario autenticado. Inicia sesión para ver tus obligaciones.
+        </p>
+      </div>
+    );
+  }
+
+
+const yearOptions = useMemo(() => {
+  // si no hay eventos todavía, damos un rango genérico ±5 años
+  if (!events.length) {
+    const base = today.getFullYear();
+    return Array.from({ length: 11 }, (_, i) => base - 5 + i);
+  }
+
+  const years = events
+    .map((e) => {
+      const d = new Date(e.datetime);
+      return isNaN(d) ? null : d.getFullYear();
+    })
+    .filter((y) => y !== null);
+
+  if (!years.length) {
+    const base = today.getFullYear();
+    return Array.from({ length: 11 }, (_, i) => base - 5 + i);
+  }
+
+  const min = Math.min(...years);
+  const max = Math.max(...years);
+
+  const from = min - 1; // pequeño padding
+  const to = max + 1;
+
+  const arr = [];
+  for (let y = from; y <= to; y++) arr.push(y);
+  return arr;
+}, [events, today]);
+
+const monthOptions = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+];
+
 
   return (
     <div className="space-y-4">
       {/* Barra de controles del calendario */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 text-xs">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col gap-4">
+        {/* fila izquierda: navegación + mes/año */}
+        <div className="flex flex-wrap items-center gap-3 text-xs">
           <button
             onClick={handlePrevMonth}
             className="h-8 w-8 rounded-full border border-slate-200 flex items-center justify-center hover:bg-slate-50"
@@ -294,99 +550,127 @@ export default function Calendar() {
           >
             Hoy
           </button>
-          <span className="text-sm font-semibold text-slate-900 capitalize">
+
+          <select
+            value={currentMonth.getMonth()}
+            onChange={handleChangeMonth}
+            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50 capitalize"
+          >
+            {monthOptions.map((m, idx) => (
+              <option key={m} value={idx}>
+                {m}
+              </option>
+            ))}
+          </select>
+
+         <select
+  value={currentMonth.getFullYear()}
+  onChange={handleChangeYear}
+  className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+>
+  {yearOptions.map((y) => (
+    <option key={y} value={y}>
+      {y}
+    </option>
+  ))}
+</select>
+
+
+          <span className="text-sm font-semibold text-slate-900 capitalize ml-auto">
             {monthLabel}
           </span>
         </div>
 
-        <div className="flex flex-wrap gap-3 text-xs">
-          <select
-            value={rangeFilter}
-            onChange={(e) => setRangeFilter(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
-          >
-            <option value="month">Mes actual</option>
-            <option value="3months">Próximos 3 meses</option>
-            <option value="year">Año completo</option>
-          </select>
+        {/* fila filtros: grilla simétrica */}
+        <div className="w-full">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+            <div>
+              <label className="block mb-1 text-[10px] text-slate-500">
+                Rango
+              </label>
+              <select
+                value={rangeFilter}
+                onChange={(e) => setRangeFilter(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+              >
+                <option value="month">Mes actual</option>
+                <option value="3months">Próximos 3 meses</option>
+                <option value="year">Año completo</option>
+              </select>
+            </div>
 
-          <select
-            value={entityFilter}
-            onChange={(e) => setEntityFilter(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
-          >
-            <option value="all">Todas las entidades</option>
-            {entityOptions.map((ent) => (
-              <option key={ent} value={ent}>
-                {ent}
-              </option>
-            ))}
-          </select>
+            <div>
+              <label className="block mb-1 text-[10px] text-slate-500">
+                Entidad
+              </label>
+              <select
+                value={entityFilter}
+                onChange={(e) => setEntityFilter(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+              >
+                <option value="all">Todas las entidades</option>
+                {entityOptions.map((ent) => (
+                  <option key={ent} value={ent}>
+                    {ent}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <select
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
-          >
-            <option value="all">Todos los roles</option>
-            {availableRoles.map((role) => (
-              <option key={role} value={role}>
-                {role}
-              </option>
-            ))}
-          </select>
+            <div>
+              <label className="block mb-1 text-[10px] text-slate-500">
+                Estado
+              </label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+              >
+                <option value="all">Todos los estados</option>
+                {Object.keys(STATUS_BADGE).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
-          >
-            <option value="all">Todos los estados</option>
-            {Object.keys(STATUS_BADGE).map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+            <div>
+              <label className="block mb-1 text-[10px] text-slate-500">
+                Frecuencia
+              </label>
+              <select
+                value={frequencyFilter}
+                onChange={(e) => setFrequencyFilter(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+              >
+                <option value="all">Todas las frecuencias</option>
+                {frequencyOptions.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <select
-            value={frequencyFilter}
-            onChange={(e) => setFrequencyFilter(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
-          >
-            <option value="all">Todas las frecuencias</option>
-            {frequencyOptions.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={responsibleFilter}
-            onChange={(e) => setResponsibleFilter(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
-          >
-            <option value="all">Todos los responsables</option>
-            {responsibleOptions.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={criticalityFilter}
-            onChange={(e) => setCriticalityFilter(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
-          >
-            <option value="all">Todas las criticidades</option>
-            {criticalityOptions.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+            <div>
+              <label className="block mb-1 text-[10px] text-slate-500">
+                Responsable
+              </label>
+              <select
+                value={responsibleFilter}
+                onChange={(e) => setResponsibleFilter(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50"
+              >
+                <option value="all">Todos los responsables</option>
+                {responsibleOptions.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
         <div className="text-[11px] text-slate-500">
@@ -414,24 +698,51 @@ export default function Calendar() {
           <div className="grid grid-cols-7 gap-1 text-xs">
             {monthDays.map((day, idx) => {
               if (!day) {
-                return <div key={idx} className="h-16" />;
+                return <div key={idx} className="h-24" />;
               }
 
               const key = day.toISOString().slice(0, 10);
-              const hasEvents = !!eventsByDay[key];
+              const dayEvents = eventsByDay[key] || [];
+              const hasEvents = dayEvents.length > 0;
               const isToday = isSameDay(day, today);
               const isSelected = isSameDay(day, selectedDate);
+
+              let dayStatus = null;
+              if (hasEvents) {
+                const hasOverdue = dayEvents.some((e) => e.status === "Vencido");
+                const hasPending = dayEvents.some(
+                  (e) => e.status === "Pendiente"
+                );
+                if (hasOverdue) dayStatus = "Vencido";
+                else if (hasPending) dayStatus = "Pendiente";
+                else dayStatus = "Dentro del plazo";
+              }
+
+              const dotColor =
+                dayStatus === "Vencido"
+                  ? isSelected
+                    ? "bg-red-300"
+                    : "bg-red-500"
+                  : dayStatus === "Pendiente"
+                  ? isSelected
+                    ? "bg-amber-300"
+                    : "bg-amber-500"
+                  : dayStatus === "Dentro del plazo"
+                  ? isSelected
+                    ? "bg-sky-300"
+                    : "bg-sky-500"
+                  : "";
 
               return (
                 <button
                   key={key}
                   onClick={() => setSelectedDate(day)}
                   className={[
-                    "relative h-16 rounded-xl border text-left px-2 py-1 flex flex-col justify-between transition",
+                    "relative h-24 rounded-xl border text-left px-2 py-1 flex flex-col justify-between transition",
                     isSelected
                       ? "border-slate-900 bg-slate-900 text-white"
                       : isToday
-                      ? "border-emerald-500 bg-emerald-50/60"
+                      ? "border-sky-500 bg-sky-50/60"
                       : "border-slate-200 bg-slate-50/40 hover:bg-slate-100",
                   ].join(" ")}
                 >
@@ -447,7 +758,7 @@ export default function Calendar() {
                     <span
                       className={[
                         "absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full",
-                        isSelected ? "bg-emerald-300" : "bg-emerald-500",
+                        dotColor,
                       ].join(" ")}
                     />
                   )}
@@ -457,7 +768,7 @@ export default function Calendar() {
           </div>
         </div>
 
-        {/* Panel derecho: agenda + próximos + métricas + detalle */}
+        {/* Panel derecho */}
         <div className="space-y-4">
           {/* Agenda del día */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4">
@@ -496,7 +807,7 @@ export default function Calendar() {
                     return (
                       <li
                         key={e.id}
-                        onClick={() => setSelectedEvent(e)}
+                        onClick={() => goToReportDetail(e)}
                         className="flex items-start gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 cursor-pointer hover:bg-slate-100"
                       >
                         <div className="mt-0.5 text-[11px] text-slate-500 min-w-[44px]">
@@ -567,7 +878,7 @@ export default function Calendar() {
                   return (
                     <li
                       key={e.id}
-                      onClick={() => setSelectedEvent(e)}
+                      onClick={() => goToReportDetail(e)}
                       className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2 cursor-pointer hover:bg-slate-100"
                     >
                       <div>
@@ -576,6 +887,18 @@ export default function Calendar() {
                         </p>
                         <p className="text-slate-500">
                           {dateLabel} · {timeLabel} · {e.entity}
+                        </p>
+                        <p className="text-slate-500 mt-0.5">
+                          Criticidad:{" "}
+                          <span
+                            className={[
+                              "inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium",
+                              CRIT_BADGE[e.criticality] ||
+                                "bg-slate-100 text-slate-700",
+                            ].join(" ")}
+                          >
+                            {e.criticality}
+                          </span>
                         </p>
                       </div>
                       <span
@@ -594,7 +917,7 @@ export default function Calendar() {
             )}
           </div>
 
-          {/* Métricas del periodo */}
+          {/* Métricas */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">
               Resumen del periodo
@@ -606,70 +929,6 @@ export default function Calendar() {
               <MetricCard label="Esta semana" value={metrics.thisWeek} />
             </div>
           </div>
-
-          {/* Detalle emergente del evento (panel) */}
-          {selectedEvent && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    Detalle del vencimiento
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Vista personalizada para:{" "}
-                    {selectedEvent.roleView || "—"}
-                  </p>
-                </div>
-                <button
-                  className="text-[11px] text-slate-400 hover:text-slate-600"
-                  onClick={() => setSelectedEvent(null)}
-                >
-                  Cerrar
-                </button>
-              </div>
-
-              <div className="mt-3 space-y-1 text-[11px] text-slate-700">
-                <p>
-                  <span className="font-semibold">Reporte:</span>{" "}
-                  {selectedEvent.title}
-                </p>
-                <p>
-                  <span className="font-semibold">Entidad:</span>{" "}
-                  {selectedEvent.entity}
-                </p>
-                <p>
-                  <span className="font-semibold">Responsable:</span>{" "}
-                  {selectedEvent.responsible || "—"}
-                </p>
-                <p>
-                  <span className="font-semibold">Estado:</span>{" "}
-                  {selectedEvent.status}
-                </p>
-                <p>
-                  <span className="font-semibold">Frecuencia:</span>{" "}
-                  {selectedEvent.frequency || "—"}
-                </p>
-                <p>
-                  <span className="font-semibold">Criticidad:</span>{" "}
-                  {selectedEvent.criticality || "—"}
-                </p>
-                <p>
-                  <span className="font-semibold">Fecha y hora:</span>{" "}
-                  {parseDate(selectedEvent.datetime).toLocaleString("es-CO")}
-                </p>
-              </div>
-
-              <div className="mt-3 flex justify-end">
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded-full border border-slate-200 text-[11px] hover:bg-slate-50"
-                  // Aquí luego puedes hacer navigate(`/reports?reportId=${selectedEvent.reportId}`)
-                >
-                  Ver detalle del reporte
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

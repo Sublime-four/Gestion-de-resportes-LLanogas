@@ -30,15 +30,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String path = request.getServletPath();
 
-        // 🔓 1) NO interceptar las rutas públicas
-        if (path.startsWith("/api/auth/")
+        // 🔓 RUTAS PÚBLICAS: NO exigir ni validar token
+        if (path.startsWith("/api/auth")      // login/registro
                 || path.startsWith("/h2-console")
-                || path.startsWith("/api/reports")) {   // <<--- AÑADIDO
+                || path.startsWith("/api/reports")    // reportes públicos
+                || path.startsWith("/api/users")      // usuarios públicos
+                || path.startsWith("/api/entities")   // entidades públicas
+                || path.startsWith("/api/settings")   // 👈 SETTINGS PÚBLICO
+        ) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // 2) Para el resto de rutas, mirar el header Authorization
+        // 👉 Para el resto de rutas, miramos el header Authorization
         String authHeader = request.getHeader("Authorization");
 
         String token = null;
@@ -52,7 +56,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
-        // 3) Si hay email válido y aún no hay autenticación en el contexto, la creamos
+        // Si hay email válido y aún no hay autenticación en el contexto, la creamos
         if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
 
             UsernamePasswordAuthenticationToken authentication =
@@ -69,6 +73,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(authentication);
         }
 
+        // Siempre seguimos la cadena
         filterChain.doFilter(request, response);
     }
 }

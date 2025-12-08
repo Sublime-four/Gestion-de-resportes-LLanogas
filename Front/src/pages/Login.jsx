@@ -6,7 +6,7 @@ import logoLlanogas from "../assets/logo-llanogas.png";
 import gasBg from "../assets/gas.jpg";
 
 export default function Login() {
-  const { login } = useAuth(); // <- viene del AuthContext
+  const { login } = useAuth(); 
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -26,7 +26,7 @@ export default function Login() {
     setError("");
 
     try {
-      // 🔐 delegamos toda la llamada al backend al AuthContext
+      // delegamos toda la llamada al backend al AuthContext
       await login(email, password, { remember });
 
       // si no lanza error, navega al dashboard (o a donde venga en state)

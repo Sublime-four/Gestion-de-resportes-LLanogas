@@ -14,6 +14,9 @@ public class ReportMapper {
 
     public Report fromImportDto(ReportImportDto dto) {
         Report entity = new Report();
+        // Si en el Excel tienes algún ID interno, lo setearías acá
+        // entity.setIdReporte(dto.getIdReporte());
+
         entity.setEntidadControl(dto.getEntidadControl());
         entity.setNombreReporte(dto.getNombreReporte());
         entity.setInformacionContenido(dto.getInformacionContenido());
@@ -32,21 +35,83 @@ public class ReportMapper {
         return entity;
     }
 
+
     public Report fromCreateDto(ReportCreateDto dto) {
         Report entity = new Report();
-        entity.setIdReporte(dto.getIdReporte());
-        entity.setNombreReporte(dto.getNombreReporte());
-        entity.setEntidadControl(dto.getEntidadControl());
-        entity.setBaseLegal(dto.getBaseLegal());
-        entity.setFechaInicio(dto.getFechaInicio());
-        entity.setFrecuencia(dto.getFrecuencia());
-        entity.setResponsableElaboracionName(dto.getResponsableElaboracionName());
-        entity.setResponsableElaboracionCC(dto.getResponsableElaboracionCC());
-        entity.setResponsableSupervisionName(dto.getResponsableSupervisionName());
-        entity.setResponsableSupervisionCC(dto.getResponsableSupervisionCC());
-        entity.setTelefonoResponsable(dto.getTelefonoResponsable());
-        entity.setCorreosNotificacion(dto.getCorreosNotificacion());
+        updateEntityFromCreateDto(dto, entity);
         return entity;
+    }
+
+    public void updateEntityFromCreateDto(ReportCreateDto dto, Report entity) {
+
+        // Campos obligatorios en creación, pero opcionales en update
+        if (dto.getIdReporte() != null) {
+            entity.setIdReporte(dto.getIdReporte());
+        }
+        if (dto.getNombreReporte() != null) {
+            entity.setNombreReporte(dto.getNombreReporte());
+        }
+
+        // Campos opcionales: solo se actualizan si vienen no nulos
+        if (dto.getEntidadControl() != null) {
+            entity.setEntidadControl(dto.getEntidadControl());
+        }
+        if (dto.getBaseLegal() != null) {
+            entity.setBaseLegal(dto.getBaseLegal());
+        }
+        if (dto.getInformacionContenido() != null) {
+            entity.setInformacionContenido(dto.getInformacionContenido());
+        }
+
+        if (dto.getCargoResponsableEnvio() != null) {
+            entity.setCargoResponsableEnvio(dto.getCargoResponsableEnvio());
+        }
+        if (dto.getResponsableElaboracionName() != null) {
+            entity.setResponsableElaboracionName(dto.getResponsableElaboracionName());
+        }
+        if (dto.getResponsableElaboracionCC() != null) {
+            entity.setResponsableElaboracionCC(dto.getResponsableElaboracionCC());
+        }
+        if (dto.getResponsableSupervisionName() != null) {
+            entity.setResponsableSupervisionName(dto.getResponsableSupervisionName());
+        }
+        if (dto.getResponsableSupervisionCC() != null) {
+            entity.setResponsableSupervisionCC(dto.getResponsableSupervisionCC());
+        }
+        if (dto.getTelefonoResponsable() != null) {
+            entity.setTelefonoResponsable(dto.getTelefonoResponsable());
+        }
+        if (dto.getCorreosNotificacion() != null) {
+            entity.setCorreosNotificacion(dto.getCorreosNotificacion());
+        }
+        if (dto.getEmailResponsableEnvio() != null) {
+            entity.setEmailResponsableEnvio(dto.getEmailResponsableEnvio());
+        }
+        if (dto.getEmailLiderSeguimiento() != null) {
+            entity.setEmailLiderSeguimiento(dto.getEmailLiderSeguimiento());
+        }
+        if (dto.getGerenciaResponsable() != null) {
+            entity.setGerenciaResponsable(dto.getGerenciaResponsable());
+        }
+
+        if (dto.getFechaInicio() != null) {
+            entity.setFechaInicio(dto.getFechaInicio());
+        }
+        if (dto.getFechaLimiteEnvio() != null) {
+            entity.setFechaLimiteEnvio(dto.getFechaLimiteEnvio());
+        }
+
+        if (dto.getFrecuencia() != null) {
+            entity.setFrecuencia(dto.getFrecuencia());
+        }
+
+        // 🔹 CLAVE: asignación a usuarios (esto es lo que usa MyTasks)
+        if (dto.getResponsableElaboracionUserId() != null) {
+            entity.setResponsableElaboracionUserId(dto.getResponsableElaboracionUserId());
+        }
+        if (dto.getSupervisorCumplimientoUserId() != null) {
+            entity.setSupervisorCumplimientoUserId(dto.getSupervisorCumplimientoUserId());
+        }
     }
 
     public ReportDto toDto(Report entity) {
@@ -70,6 +135,11 @@ public class ReportMapper {
         dto.setBaseLegal(entity.getBaseLegal());
         dto.setFechaInicio(entity.getFechaInicio());
         dto.setFechaLimiteEnvio(entity.getFechaLimiteEnvio());
+
+        // Asignación a usuarios
+        dto.setResponsableElaboracionUserId(entity.getResponsableElaboracionUserId());
+        dto.setSupervisorCumplimientoUserId(entity.getSupervisorCumplimientoUserId());
+
         return dto;
     }
 

@@ -1,10 +1,12 @@
 // src/pages/Entities.jsx
 import React, { useMemo, useState, useEffect } from "react";
 
-// Inicial: sin datos quemados. Se llenará con backend o localStorage.
-const INITIAL_ENTITIES = [];
+const REPORTS_API = "/api/reports";
 
-// util simple para mostrar las fechas ISO
+const INITIAL_ENTITIES = [];
+const PAGE_SIZE = 10; // límite de 10 filas
+
+// ===== helpers de fechas =====
 function formatDateTime(isoString) {
   if (!isoString) return "—";
   const d = new Date(isoString);
@@ -17,6 +19,57 @@ function formatDateTime(isoString) {
   const mi = String(d.getMinutes()).padStart(2, "0");
 
   return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+}
+
+function parseDateString(dateStr) {
+  if (!dateStr) return null;
+  const iso = new Date(dateStr);
+  if (!isNaN(iso)) return iso;
+  const parts = String(dateStr).split("/");
+  if (parts.length === 3) {
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const y = parseInt(parts[2], 10);
+    const dd = new Date(y, m, d);
+    if (!isNaN(dd)) return dd;
+  }
+  return null;
+}
+
+// meses de diferencia entre dueDate y hoy, sólo si está vencido
+function monthsOverdue(dueDate) {
+  if (!dueDate) return 0;
+  const today = new Date();
+  const todayMid = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
+  const dueMid = new Date(
+    dueDate.getFullYear(),
+    dueDate.getMonth(),
+    dueDate.getDate()
+  );
+
+  if (todayMid <= dueMid) return 0; // no está vencido
+
+  const months =
+    (todayMid.getFullYear() - dueMid.getFullYear()) * 12 +
+    (todayMid.getMonth() - dueMid.getMonth());
+
+  return months;
+}
+
+// ===== regla de negocio: si vencido >= 2 meses -> Inactiva, resto Activa =====
+function computeEntityStatus(entity) {
+  if (entity.vencido !== undefined && entity.vencido !== null) {
+    const v = String(entity.vencido).trim().toLowerCase();
+    if (v === "2 meses" || v === "2 mes" || v === "2") return "Inactiva";
+  }
+
+  const meses =
+    typeof entity.vencidoMeses === "number" ? entity.vencidoMeses : 0;
+  return meses >= 2 ? "Inactiva" : "Activa";
 }
 
 export default function Entities() {
@@ -32,18 +85,136 @@ export default function Entities() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Todos");
-  const [showModal, setShowModal] = useState(false);
-  const [editingId, setEditingId] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const [form, setForm] = useState({
-    code: "",
-    name: "",
-    website: "",
-    legalBase: "",
-    status: "Activa",
-  });
+  // Cargar reportes y construir entidades derivadas
+  useEffect(() => {
+    const loadData = async () => {
+      let reports = [];
 
-  // Persistencia local (puedes reemplazar esto por llamadas a tu API)
+      // 1) reports desde backend
+      try {
+        const resp = await fetch(REPORTS_API);
+        if (resp.ok) {
+          reports = await resp.json();
+        } else {
+          console.warn(
+            "No se pudieron cargar reports desde backend, status:",
+            resp.status
+          );
+        }
+      } catch (err) {
+        console.warn(
+          "Error llamando a /api/reports, uso localStorage si existe",
+          err
+        );
+      }
+
+      // fallback reports localStorage
+      if (!reports.length && typeof window !== "undefined") {
+        try {
+          const saved = localStorage.getItem("reportesCreados");
+          if (saved) reports = JSON.parse(saved);
+        } catch (e) {
+          console.error("Error leyendo reportesCreados de localStorage", e);
+        }
+      }
+
+      // 2) agrupar por entidad desde reports
+      const map = new Map();
+
+      reports.forEach((r) => {
+        const rawCode = (r.entidadControl || r.entity || "").trim();
+        if (!rawCode) return;
+
+        const key = rawCode.toLowerCase();
+        const baseLegal = r.baseLegal || r.marcoLegal || "";
+
+        const dueStr =
+          r.fechaLimiteEnvio || r.nextDue || r.due || null;
+        const dueDate = parseDateString(dueStr);
+        const mesesVencido = monthsOverdue(dueDate);
+
+        const createdCandidate =
+          parseDateString(r.fechaInicio) ||
+          parseDateString(r.createdAt) ||
+          null;
+        const updatedCandidate =
+          parseDateString(r.fechaLimiteEnvio) ||
+          parseDateString(r.updatedAt) ||
+          parseDateString(r.fechaInicio) ||
+          null;
+
+        if (!map.has(key)) {
+          map.set(key, {
+            id: rawCode,
+            code: rawCode,
+            name: rawCode,
+            website: "",
+            legalBase: baseLegal,
+            createdAt: createdCandidate
+              ? createdCandidate.toISOString()
+              : null,
+            updatedAt: updatedCandidate
+              ? updatedCandidate.toISOString()
+              : null,
+            vencidoMeses: mesesVencido,
+          });
+        } else {
+          const ent = map.get(key);
+
+          if (baseLegal) {
+            const merged = new Set(
+              (ent.legalBase || "")
+                .split(";")
+                .map((s) => s.trim())
+                .filter(Boolean)
+            );
+            merged.add(baseLegal);
+            ent.legalBase = Array.from(merged).join("; ");
+          }
+
+          if (createdCandidate) {
+            if (
+              !ent.createdAt ||
+              new Date(createdCandidate) < new Date(ent.createdAt)
+            ) {
+              ent.createdAt = createdCandidate.toISOString();
+            }
+          }
+
+          if (updatedCandidate) {
+            if (
+              !ent.updatedAt ||
+              new Date(updatedCandidate) > new Date(ent.updatedAt)
+            ) {
+              ent.updatedAt = updatedCandidate.toISOString();
+            }
+          }
+
+          ent.vencidoMeses = Math.max(
+            ent.vencidoMeses || 0,
+            mesesVencido
+          );
+
+          map.set(key, ent);
+        }
+      });
+
+      const entitiesFromReports = Array.from(map.values());
+      setEntities(entitiesFromReports);
+
+      try {
+        localStorage.setItem("entities", JSON.stringify(entitiesFromReports));
+      } catch (e) {
+        console.error("No pude guardar entities en localStorage", e);
+      }
+    };
+
+    loadData();
+  }, []);
+
+  // Persistencia local cada vez que cambian
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -56,8 +227,12 @@ export default function Entities() {
   // Métricas de cabecera
   const metrics = useMemo(() => {
     const total = entities.length;
-    const active = entities.filter((e) => e.status === "Activa").length;
-    const inactive = entities.filter((e) => e.status === "Inactiva").length;
+    const active = entities.filter(
+      (e) => computeEntityStatus(e) === "Activa"
+    ).length;
+    const inactive = entities.filter(
+      (e) => computeEntityStatus(e) === "Inactiva"
+    ).length;
     return { total, active, inactive };
   }, [entities]);
 
@@ -67,156 +242,81 @@ export default function Entities() {
     return entities.filter((e) => {
       const matchesSearch =
         q === "" ||
-        e.name.toLowerCase().includes(q) ||
-        e.code.toLowerCase().includes(q) ||
+        (e.name || "").toLowerCase().includes(q) ||
+        (e.code || "").toLowerCase().includes(q) ||
         (e.website || "").toLowerCase().includes(q);
+
+      const status = computeEntityStatus(e);
       const matchesStatus =
-        statusFilter === "Todos" ? true : e.status === statusFilter;
+        statusFilter === "Todos" ? true : status === statusFilter;
 
       return matchesSearch && matchesStatus;
     });
   }, [entities, search, statusFilter]);
 
-  const resetForm = () => {
-    setForm({
-      code: "",
-      name: "",
-      website: "",
-      legalBase: "",
-      status: "Activa",
-    });
-    setEditingId(null);
-  };
+  // paginación
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredEntities.length / PAGE_SIZE)
+  );
 
-  const handleOpenNew = () => {
-    resetForm();
-    setShowModal(true);
-  };
-
-  const handleEdit = (entity) => {
-    setForm({
-      code: entity.code || "",
-      name: entity.name || "",
-      website: entity.website || "",
-      legalBase: entity.legalBase || "",
-      status: entity.status || "Activa",
-    });
-    setEditingId(entity.id);
-    setShowModal(true);
-  };
-
-  const handleDelete = (id) => {
-    if (
-      !window.confirm(
-        "¿Eliminar esta entidad? Esta acción no se puede deshacer."
-      )
-    ) {
-      return;
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
     }
-    setEntities((prev) => prev.filter((e) => e.id !== id));
-  };
+  }, [filteredEntities.length, totalPages, currentPage]);
 
-  const handleFormChange = (field, value) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  };
+  const paginatedEntities = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+    return filteredEntities.slice(start, end);
+  }, [filteredEntities, currentPage]);
 
-  const handleSave = (e) => {
-    e.preventDefault();
-
-    if (!form.code.trim() || !form.name.trim()) {
-      alert("ID de entidad y nombre son obligatorios.");
-      return;
-    }
-
-    // Validación simple de URL (opcional)
-    if (form.website.trim()) {
-      try {
-        // eslint-disable-next-line no-new
-        new URL(
-          form.website.startsWith("http")
-            ? form.website
-            : `https://${form.website}`
-        );
-      } catch {
-        alert("La URL de la página web no es válida.");
-        return;
-      }
-    }
-
-    const timestamp = new Date().toISOString();
-
-    if (editingId) {
-      setEntities((prev) =>
-        prev.map((e) =>
-          e.id === editingId
-            ? {
-                ...e,
-                ...form,
-                updatedAt: timestamp,
-              }
-            : e
-        )
-      );
-    } else {
-      // evitar códigos duplicados localmente
-      const exists = entities.some(
-        (e) => e.code.toLowerCase() === form.code.trim().toLowerCase()
-      );
-      if (exists) {
-        alert("Ya existe una entidad con ese ID. Usa otro identificador.");
-        return;
-      }
-
-      const newEntity = {
-        id: Date.now(), // en backend será el id real
-        code: form.code.trim(),
-        name: form.name.trim(),
-        website: form.website.trim(),
-        legalBase: form.legalBase.trim(),
-        status: form.status,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      setEntities((prev) => [...prev, newEntity]);
-    }
-
-    setShowModal(false);
-    resetForm();
-  };
+  const startIndex =
+    filteredEntities.length === 0
+      ? 0
+      : (currentPage - 1) * PAGE_SIZE + 1;
+  const endIndex = Math.min(
+    currentPage * PAGE_SIZE,
+    filteredEntities.length
+  );
 
   return (
     <div className="space-y-6">
-      {/* Resumen ejecutivo de entidades */}
+      {/* Resumen ejecutivo */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <MetricCard
           label="Entidades registradas"
           value={metrics.total}
-          helper="Total de entidades de control disponibles."
+          helper="Total de entidades de control con reportes."
         />
         <MetricCard
           label="Activas"
           value={metrics.active}
           tone="success"
-          helper="Entidades habilitadas para asignar reportes."
+          helper="Sin reportes vencidos ≥ 2 meses."
         />
         <MetricCard
           label="Inactivas"
           value={metrics.inactive}
           tone="warning"
-          helper="No se muestran en nuevos reportes, pero conservan histórico."
+          helper="Con al menos un reporte vencido ≥ 2 meses."
         />
       </div>
 
-      {/* Filtros + acciones */}
+      {/* Filtros */}
       <div className="bg-white rounded-2xl border border-slate-200 px-4 py-4 md:px-5 md:py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap gap-3 text-xs">
           <div className="flex flex-col gap-1">
             <span className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-              Estado
+              Estado (regla 2 meses)
             </span>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setCurrentPage(1);
+              }}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
               <option value="Todos">Todos</option>
@@ -232,23 +332,20 @@ export default function Entities() {
               type="text"
               placeholder="Buscar por nombre, ID o web..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setCurrentPage(1);
+              }}
               className="h-9 w-72 rounded-full border border-slate-200 bg-slate-50 px-8 pr-3 text-xs text-slate-700 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
             />
             <span className="pointer-events-none absolute left-2 top-1.5 text-slate-400 text-sm">
               🔍
             </span>
           </div>
-          <button
-            onClick={handleOpenNew}
-            className="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 h-9 text-xs font-medium text-white hover:bg-slate-800"
-          >
-            + Nueva entidad
-          </button>
         </div>
       </div>
 
-      {/* Tabla de entidades */}
+      {/* Tabla */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
           <div>
@@ -256,11 +353,13 @@ export default function Entities() {
               Entidades de control
             </h2>
             <p className="text-[11px] text-slate-500">
-              Catálogo centralizado de entidades para asignación de reportes.
+              Catálogo centralizado por entidad, consolidado desde los
+              reportes. Vista solo lectura.
             </p>
           </div>
           <span className="text-[11px] text-slate-500">
-            {filteredEntities.length} registro(s) visible(s)
+            {filteredEntities.length} registro(s) filtrado(s) | página{" "}
+            {currentPage} de {totalPages}
           </span>
         </div>
 
@@ -272,96 +371,106 @@ export default function Entities() {
               <th className="py-2 font-medium">Página web</th>
               <th className="py-2 font-medium">Base legal</th>
               <th className="py-2 font-medium">Creado</th>
-              <th className="py-2 font-medium">Actualizado</th>
+              <th className="py-2 font-medium">
+                Última modificación (reportes)
+              </th>
               <th className="py-2 font-medium">Estado</th>
-              <th className="py-2 pr-4 text-center font-medium">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filteredEntities.map((e) => (
-              <tr key={e.id} className="text-slate-700 hover:bg-slate-50/70">
-                <td className="py-2.5 pl-4 pr-2 text-[11px] font-medium text-slate-900">
-                  {e.code}
-                </td>
-                <td className="py-2.5 pr-2 text-[11px]">{e.name}</td>
-                <td className="py-2.5 pr-2 text-[11px] text-sky-600">
-                  {e.website ? (
-                    <a
-                      href={
-                        e.website.startsWith("http")
-                          ? e.website
-                          : `https://${e.website}`
-                      }
-                      target="_blank"
-                      rel="noreferrer"
-                      className="hover:underline"
-                    >
-                      {e.website}
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="py-2.5 pr-2 text-[11px] text-slate-500 max-w-xs truncate">
-                  {e.legalBase || "—"}
-                </td>
-                <td className="py-2.5 pr-2 text-[11px] text-slate-500">
-                  {formatDateTime(e.createdAt)}
-                </td>
-                <td className="py-2.5 pr-2 text-[11px] text-slate-500">
-                  {formatDateTime(e.updatedAt)}
-                </td>
-                <td className="py-2.5 pr-2 text-[11px]">
-                  <StatusPill status={e.status} />
-                </td>
-                <td className="py-2.5 pr-4 text-center">
-                  <div className="inline-flex gap-1">
-                    <button
-                      onClick={() => handleEdit(e)}
-                      className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      onClick={() => handleDelete(e.id)}
-                      className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] hover:bg-slate-50"
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {paginatedEntities.map((e) => {
+              const computedStatus = computeEntityStatus(e);
+              return (
+                <tr
+                  key={e.id || e.code}
+                  className="text-slate-700 hover:bg-slate-50/70"
+                >
+                  <td className="py-2.5 pl-4 pr-2 text-[11px] font-medium text-slate-900">
+                    {e.code}
+                  </td>
+                  <td className="py-2.5 pr-2 text-[11px]">{e.name}</td>
+                  <td className="py-2.5 pr-2 text-[11px] text-sky-600">
+                    {e.website ? (
+                      <a
+                        href={
+                          e.website.startsWith("http")
+                            ? e.website
+                            : `https://${e.website}`
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline"
+                      >
+                        {e.website}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-2 text-[11px] text-slate-500 max-w-xs truncate">
+                    {e.legalBase || "—"}
+                  </td>
+                  <td className="py-2.5 pr-2 text-[11px] text-slate-500">
+                    {formatDateTime(e.createdAt)}
+                  </td>
+                  <td className="py-2.5 pr-2 text-[11px] text-slate-500">
+                    {formatDateTime(e.updatedAt)}
+                  </td>
+                  <td className="py-2.5 pr-2 text-[11px]">
+                    <StatusPill status={computedStatus} />
+                  </td>
+                </tr>
+              );
+            })}
 
             {filteredEntities.length === 0 && (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={7}
                   className="py-6 text-center text-[11px] text-slate-500"
                 >
-                  No hay entidades registradas o no coinciden con los filtros.
-                  Cuando conectes el backend, este listado se llenará con las
-                  entidades oficiales (SUI, Superservicios, ANH, etc.).
+                  No hay entidades registradas o no coinciden con los
+                  filtros. Se construyen automáticamente a partir de los
+                  reportes.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-      </div>
 
-      {/* Modal crear / editar entidad */}
-      {showModal && (
-        <EntityModal
-          form={form}
-          onChange={handleFormChange}
-          onClose={() => {
-            setShowModal(false);
-            resetForm();
-          }}
-          onSave={handleSave}
-          isEditing={!!editingId}
-        />
-      )}
+        {/* Controles de paginación */}
+        {filteredEntities.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 text-[11px] text-slate-600">
+            <span>
+              Mostrando {startIndex}–{endIndex} de{" "}
+              {filteredEntities.length} registro(s)
+            </span>
+            <div className="inline-flex items-center gap-2">
+              <button
+                onClick={() =>
+                  setCurrentPage((p) => Math.max(1, p - 1))
+                }
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 rounded-full border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                ← Anterior
+              </button>
+              <span>
+                Página {currentPage} / {totalPages}
+              </span>
+              <button
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(totalPages, p + 1))
+                }
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 rounded-full border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                Siguiente →
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -389,9 +498,13 @@ function MetricCard({ label, value, helper, tone = "neutral" }) {
         <p className="text-[10px] uppercase tracking-[0.18em] text-slate-600 mb-1">
           {label}
         </p>
-        <p className="text-xl font-semibold text-slate-900 mb-0.5">{value}</p>
+        <p className="text-xl font-semibold text-slate-900 mb-0.5">
+          {value}
+        </p>
         {helper && (
-          <p className="text-[11px] text-slate-600 leading-snug">{helper}</p>
+          <p className="text-[11px] text-slate-600 leading-snug">
+            {helper}
+          </p>
         )}
       </div>
     </div>
@@ -411,97 +524,5 @@ function StatusPill({ status }) {
     >
       {status}
     </span>
-  );
-}
-
-function EntityModal({ form, onChange, onClose, onSave, isEditing }) {
-  return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <form
-        onSubmit={onSave}
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-slate-200 p-5 space-y-4 text-xs"
-      >
-        <h3 className="text-sm font-semibold text-slate-900">
-          {isEditing ? "Editar entidad" : "Nueva entidad"}
-        </h3>
-
-        <div className="grid grid-cols-2 gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-slate-600">ID Entidad *</span>
-            <input
-              type="text"
-              value={form.code}
-              onChange={(e) => onChange("code", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Ej: SUI, SSPEL, ANH"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-slate-600">Estado</span>
-            <select
-              value={form.status}
-              onChange={(e) => onChange("status", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-            >
-              <option value="Activa">Activa</option>
-              <option value="Inactiva">Inactiva</option>
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1 col-span-2">
-            <span className="text-[11px] text-slate-600">Nombre *</span>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => onChange("name", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Nombre completo de la entidad"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1 col-span-2">
-            <span className="text-[11px] text-slate-600">Página web</span>
-            <input
-              type="text"
-              value={form.website}
-              onChange={(e) => onChange("website", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Ej: www.entidad.gov.co"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1 col-span-2">
-            <span className="text-[11px] text-slate-600">Base legal</span>
-            <textarea
-              value={form.legalBase}
-              onChange={(e) => onChange("legalBase", e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-200 h-20"
-              placeholder="Normas o resoluciones principales asociadas a la entidad."
-            />
-          </label>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-50"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            className="px-3 py-1.5 rounded-lg bg-slate-900 text-[11px] font-medium text-white hover:bg-slate-800"
-          >
-            {isEditing ? "Guardar cambios" : "Crear entidad"}
-          </button>
-        </div>
-      </form>
-    </div>
   );
 }

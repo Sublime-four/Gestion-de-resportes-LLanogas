@@ -1,8 +1,13 @@
+// src/layouts/MainLayout.jsx
 import React, { useMemo, useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import logoLlanogas from "../assets/logo-llanogas.png";
 import useAuth from "../hooks/useAuth";
-import { generateAlertsFromReports } from "../utils/notifications";
+import {
+  fetchNotifications,
+  markNotificationReadApi,
+  markAllNotificationsReadApi,
+} from "../services/notificationsApi";
 
 const mainNav = [
   { to: "/dashboard", icon: "📊", label: "Dashboard" },
@@ -19,7 +24,6 @@ const adminNav = [
   { to: "/settings", icon: "⚙️", label: "Configuración" },
 ];
 
-// 🔐 qué rutas del menú puede ver cada rol
 const ROLE_NAV_PERMISSIONS = {
   admin: [
     "/dashboard",
@@ -97,12 +101,10 @@ export default function MainLayout({ title, subtitle, children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // 🔑 rol interno para permisos (id tipo "admin", "responsable_reportes", etc.)
   const roleId = user?.roleId || null;
 
-  // helper para filtrar ítems de menú según rol
   const filterNavItems = (items) => {
-    if (!roleId) return items; // si no hay rol, no escondemos nada (útil mientras conectas auth real)
+    if (!roleId) return items;
     const allowed = ROLE_NAV_PERMISSIONS[roleId] || [];
     return items.filter((item) => allowed.includes(item.to));
   };
@@ -145,59 +147,67 @@ export default function MainLayout({ title, subtitle, children }) {
     });
   };
 
-  // ---------- notificaciones basadas en reportes ----------
+  // ---------- notificaciones (backend-ready) ----------
   const [showNotifications, setShowNotifications] = useState(false);
-
-  const [notifications, setNotifications] = useState(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem("notifications");
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [notifications, setNotifications] = useState([]);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(true);
+  const [notificationsError, setNotificationsError] = useState(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    let cancelled = false;
 
-    try {
-      const rawReports = localStorage.getItem("reportesCreados");
-      const reports = rawReports ? JSON.parse(rawReports) : [];
+    const loadNotifications = async () => {
+      try {
+        setIsLoadingNotifications(true);
+        setNotificationsError(null);
 
-      const generated = generateAlertsFromReports(reports);
+        const data = await fetchNotifications(); // backend
+        if (!cancelled) {
+          setNotifications(data || []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setNotificationsError(
+            error?.message || "No se pudieron cargar las notificaciones"
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingNotifications(false);
+        }
+      }
+    };
 
-      setNotifications((prev) => {
-        const readMap = Object.fromEntries(prev.map((n) => [n.id, n.read]));
-        return generated.map((a) => ({
-          ...a,
-          read: readMap[a.id] ?? a.read ?? false,
-        }));
-      });
-    } catch {
-      // ignore
-    }
+    loadNotifications();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.setItem("notifications", JSON.stringify(notifications));
-    } catch {
-      // ignore
-    }
-  }, [notifications]);
-
-  const handleMarkAllRead = () => {
+  const handleMarkAllRead = async () => {
+    
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+
+    try {
+      await markAllNotificationsReadApi();
+    } catch (error) {
+      console.error(error);
+    }
   };
 
-  const handleNotificationClick = (id) => {
+  const handleNotificationClick = async (id) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
+
+    try {
+      await markNotificationReadApi(id);
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   // ---------- usuario / avatar ----------
@@ -238,7 +248,7 @@ export default function MainLayout({ title, subtitle, children }) {
   };
 
   return (
-    <div className="min-h-screen flex bg-slate-950/5">
+    <div className="h-screen flex bg-slate-950/5 overflow-hidden">
       {/* Sidebar */}
       <aside className="w-72 bg-slate-950 text-slate-100 flex flex-col shadow-2xl">
         <div className="px-6 pt-6 pb-5 border-b border-slate-800">
@@ -285,7 +295,6 @@ export default function MainLayout({ title, subtitle, children }) {
           )}
         </nav>
 
-        {/* Footer sidebar con usuario */}
         <div className="px-5 py-4 border-t border-slate-800 bg-slate-950/90">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-full bg-slate-800 flex items-center justify-center text-xs font-semibold">
@@ -310,7 +319,7 @@ export default function MainLayout({ title, subtitle, children }) {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col overflow-hidden">
         {/* Topbar */}
         <header className="relative z-30 h-16 bg-white/80 backdrop-blur border-b border-slate-200 px-6 flex items-center justify-between">
           <div>
@@ -326,24 +335,32 @@ export default function MainLayout({ title, subtitle, children }) {
           <div className="flex items-center gap-4 relative">
             {/* Selector de período */}
             <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white">
-              <button
-                type="button"
-                onClick={handlePrevPeriod}
-                className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500"
-              >
-                ‹
-              </button>
+              {!showNotifications && (
+                <button
+                  type="button"
+                  onClick={handlePrevPeriod}
+                  className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500"
+                  aria-label="Periodo anterior"
+                >
+                  ‹
+                </button>
+              )}
+
               <span className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span>Período: {periodLabel}</span>
               </span>
-              <button
-                type="button"
-                onClick={handleNextPeriod}
-                className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500"
-              >
-                ›
-              </button>
+
+              {!showNotifications && (
+                <button
+                  type="button"
+                  onClick={handleNextPeriod}
+                  className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500"
+                  aria-label="Periodo siguiente"
+                >
+                  ›
+                </button>
+              )}
             </div>
 
             {/* Notificaciones */}
@@ -352,6 +369,7 @@ export default function MainLayout({ title, subtitle, children }) {
                 type="button"
                 onClick={() => setShowNotifications((v) => !v)}
                 className="relative"
+                aria-label="Abrir notificaciones"
               >
                 <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-200">
                   🔔
@@ -364,16 +382,20 @@ export default function MainLayout({ title, subtitle, children }) {
               </button>
 
               {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 rounded-2xl border border-slate-200 bg-white shadow-xl text-[11px] z-40">
+                <div className="absolute right-0 mt-3 w-[28rem] max-h-80 rounded-2xl border border-slate-200 bg-white shadow-xl text-[11px] z-40">
                   <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
                     <span className="font-semibold text-slate-800">
                       Notificaciones
                     </span>
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-400">
-                        {unreadCount} nuevas
-                      </span>
-                      {notifications.length > 0 && (
+                      {isLoadingNotifications ? (
+                        <span className="text-slate-400">Cargando...</span>
+                      ) : (
+                        <span className="text-slate-400">
+                          {unreadCount} nuevas
+                        </span>
+                      )}
+                      {notifications.length > 0 && !isLoadingNotifications && (
                         <button
                           type="button"
                           onClick={handleMarkAllRead}
@@ -384,14 +406,30 @@ export default function MainLayout({ title, subtitle, children }) {
                       )}
                     </div>
                   </div>
-                  <div className="max-h-64 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <p className="px-3 py-4 text-slate-500">
-                        Aún no hay notificaciones. Cuando conectes el backend
-                        aparecerán aquí los vencimientos, alertas y cambios de
-                        configuración.
+                  <div className="max-h-72 overflow-y-auto">
+                    {notificationsError && (
+                      <p className="px-3 py-3 text-[11px] text-red-500">
+                        {notificationsError}
                       </p>
-                    ) : (
+                    )}
+
+                    {!notificationsError && isLoadingNotifications && (
+                      <p className="px-3 py-4 text-slate-500">
+                        Cargando notificaciones...
+                      </p>
+                    )}
+
+                    {!isLoadingNotifications &&
+                      !notificationsError &&
+                      notifications.length === 0 && (
+                        <p className="px-3 py-4 text-slate-500">
+                          Aún no hay notificaciones.
+                        </p>
+                      )}
+
+                    {!isLoadingNotifications &&
+                      !notificationsError &&
+                      notifications.length > 0 &&
                       notifications.map((n) => (
                         <button
                           key={n.id}
@@ -417,8 +455,7 @@ export default function MainLayout({ title, subtitle, children }) {
                             {n.responsable}
                           </p>
                         </button>
-                      ))
-                    )}
+                      ))}
                   </div>
                 </div>
               )}
@@ -432,7 +469,7 @@ export default function MainLayout({ title, subtitle, children }) {
                 {initials}
               </div>
               <div className="text-xs">
-                <p className="font-semibold text-slate-800 truncate">
+                <p className="font-semibold text-slate-808 truncate">
                   {displayName}
                 </p>
                 {displayRole && (

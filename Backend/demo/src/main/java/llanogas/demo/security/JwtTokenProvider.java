@@ -44,7 +44,7 @@ public class JwtTokenProvider {
 
     public String getEmailFromToken(String token) {
         Claims claims = Jwts.parser()
-                .verifyWith(signingKey)      // 👈 ahora encaja con SecretKey
+                .verifyWith(signingKey)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();

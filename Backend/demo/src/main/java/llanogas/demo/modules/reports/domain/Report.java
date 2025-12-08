@@ -66,6 +66,22 @@ public class Report {
     @Column(name = "fecha_limite_envio")
     private LocalDate fechaLimiteEnvio;
 
+    // ================== NUEVO: asignación a usuarios ==================
+
+    /**
+     * Usuario responsable de la elaboración (FK a users.id).
+     * Es el que verá el reporte en "Mis Tareas".
+     */
+    @Column(name = "responsable_elaboracion_user_id")
+    private Long responsableElaboracionUserId;
+
+    /**
+     * Usuario responsable de la supervisión / cumplimiento (FK a users.id).
+     * También podrá ver el reporte en "Mis Tareas".
+     */
+    @Column(name = "supervisor_cumplimiento_user_id")
+    private Long supervisorCumplimientoUserId;
+
     // ===== Getters / setters =====
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -123,4 +139,14 @@ public class Report {
 
     public LocalDate getFechaLimiteEnvio() { return fechaLimiteEnvio; }
     public void setFechaLimiteEnvio(LocalDate fechaLimiteEnvio) { this.fechaLimiteEnvio = fechaLimiteEnvio; }
+
+    public Long getResponsableElaboracionUserId() { return responsableElaboracionUserId; }
+    public void setResponsableElaboracionUserId(Long responsableElaboracionUserId) {
+        this.responsableElaboracionUserId = responsableElaboracionUserId;
+    }
+
+    public Long getSupervisorCumplimientoUserId() { return supervisorCumplimientoUserId; }
+    public void setSupervisorCumplimientoUserId(Long supervisorCumplimientoUserId) {
+        this.supervisorCumplimientoUserId = supervisorCumplimientoUserId;
+    }
 }

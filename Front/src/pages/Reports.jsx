@@ -2,11 +2,14 @@
 import React, { useState, useRef } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import llanogasLogo from "../assets/logo-llanogas.png"; // puedes seguir usándolo en la UI si quieres
+import llanogasLogo from "../assets/logo-llanogas.png";
+import { useLocation } from "react-router-dom";
+
+
 
 const reports = [];
 
-// ⚠️ Pega aquí el base64 completo de tu logo (incluyendo "data:image/png;base64,")
+
 const LLANOGAS_LOGO_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAV8AAAEECAYAAACP/De1AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAGehJREFUeNrsnU1y28iWRlEOR/TwySt48OhFvMEzvQJBvQHJKyhqBZJWIHEFolZAegWiN9CCVmC6Bx3RI7NWUOphj7pxpYsolIogM5G/oM6JYMhVoshE4uLLL/9uFgUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQGD+7d9vj5pXRU1AzryjCuAAuW1eDwgwIL4A8VzvpPkxpSYA8QWI73oBEF+AiK63an5U1AQgvgBxuaYKAPEFwPUCIL6A6wVAfAH8ut4zXC8gvgDxYYUDIL4AkV3vtPlRUhOA+ALEhbFeQHwBcL0AiC/gegEQXwDPrvcS1wuIL0Bc4T3C9QLiCxAfcb1HVAMgvgBxXe8FNQGILwCuFwDxBVwvAOILgOsFQHxh1K63LFjhAIgvQHQQXkB8ARK43ik1AYgvAK4XAPEFXC8A4gvgFxKlA+ILENn1Vs2PM2oCEF+AuDDWC4gvQALXW1ETgPgC4HoBEF/A9QIgvgC4XgDEF0bteqe4XkB8AXC9AIgvvAnXW1ITgPgC4HoBEF/A9QIgvgC4XgDEF0btem8CuN7N//7HVU3tAuILsF14Qx2KOaN2AfEF6CfEoZjiepdULSC+ALheAMQXcL0AiC/gev1yTu0C4gvQz20A11uzwgEQX4B+11sWYQ7FZKwXEF+AHYTYUIHrBcQXANcLgPgCrhcA8QVcb4CPvqJ2AfEF6GcR4DOXjetdD2gEABBfeBOutyrCHA802yauzet3/c7Xv7tpfnxvfk64K4D4wlsgxFivuN5Nz3ftWkMsv1voRg8AxBdwvT5cb2E2rizOd8HdAcQXcL3+XK8pZ41Y33J7APEFXK8ZT46ut8ulHmEEgPjCQRHCWd55cL1/KiMTcID4wiG5XnGUvkVNXO98y3dNiuFriGXi7YEJOEB84VAIMdYrrvcpgMN+FmBuGSC+cAiut4zkeqvCz7jypPksVkAA4gu4XkPX6/O7po0AX3L7APEFXO8Lm8Cut8vttt1xAIgv5Cy8MnYaYoXDLILr7XLPCghAfGFMRDsUsxHHsyLMzrmiYAsyIL4wMtcb8yj40LvT2IIMiC/gel8J/bTwP668DbYgA+ILuN4O1xEvjy3IgPjCm3K968SutwtbkAHxhexcbxnI9V5l4Hpb2IIMiC9kx77k5UPYeiimboAoE10nW5AB8YWsXO80wEdvSxl5lMj1dmELMiC+kI3r9U3fUfAhxpWHwBZkQHzhTbnei4wuny3IgPgCrjcRbEEGxBeiu94qkOs9H4HrbWELMiC+cBCut+9QzBxdbwtbkAHxhaiutwrw0X2HYl5nXiVsQQbEFw7O9V6PpE7YggyILxyU6x2ToLEFGRBfGJXrnUd0vZuAdcMWZEB8IYjrDZG8/CmQ691sW7KmiXpWoQWYaAHEF7x2qwN8Zqij4Gc7fifL2dYB64ktyID4gjfXKy60DOB6+w7FPHN0vcu+X6rYn+v3h4ItyID4ghfGdBT8bN8bmu8V5/sldE+BLciA+MKYXK+LYK13ud5XAlwX/TmDfcEWZEB84U24XisxbcogDcAyYN2xBRkQXxjkekMkL5cx2ZsArrcvKc8+AQ4+AVewBRkQX7AQ3lDJy0Mdijlz+NuTIuwEHFuQAfEFY2IfBR/d9Xbc71MEAWYLMiC+YOR6x3QU/My1YLoCIvQEHFuQAfGFrFxv6fC5KxfX+0qApXzzgPXKFmRAfOFgXK9Xt9oIsHweW5AB8YXohDoKPoTr7UtF6QpbkAHxhaiut9Qhh7G43lmIemALMiC+kML1+mbrSoRGeG4ydb2tALMFGRBfiOZ6pzFcr6dx5VnoOmELMiC+cFCut3BfTTEP6XpfCTBbkAHxBVxv0ZOAPbAAx9iCfE8kIr7w9gix9XUZyPX2JeUJTegdcBVbkBFfeFuutyrckpfHdr3zFPXEFmRAfME3MY+Cvx2p620FOMYW5AUTcIgvvA3XW0VyvWXhNq6czPW+EuBlhHKwBRnxBVyvN9fr+l1JXe8rAY6yBRkBRnwB15va9W5NwJ6YGCsgmIBDfAHXaya8gVzv19wqjy3IgPjCENc7DeB6+w7FdHW9z843x3qMtAX5WusQEF/A9W6lb0zWR/auT7lWZIQtyKGOcwLEFxK4Xt9OKtRR8N3ud7aTTxG2IE+ZfEN8Addr43p/9ej+cp/9F/e7Cfj5Z4Qu4gu43r2uN4BgyOz/T0lFmaMIa+MTMufEMRGM+MI4hTfU2OFqm+vV7/Mtku01/C4nQWQ4ERVy7W9JFCO+ME4uAz3Ajzucakim6oQXuSQkD7wJpCKEEV8Yp+u9CPTxm8SXJyIs48EPnAoBiC/k6HqjjpP6Os7d0hmKAH9PlRmMhDhgynuqANcbGHHFZeTvFAGUoYhNz9lxpUWZnnQjhSkh67kmmhFfGBdnsV1vh1UR5jTkoQ2RiO5Py7/50gjwyuB94rxDOu4nQplhBxgXpxG6+33cZVYXQ8Rx71CCDjeEPgbokVBGfGFcVKnEXZPszA65cnVY5yFC72JFKCO+MC5hCC0Kk12rDDQV5PqA6zeG8C5jndYMiC94EsZI37Nv84acfVYfYP0+RKrjGaGM+AJso9qVd1Y2HzSvExWRg5g4ks0dsYQX14v4Auzidt/6Wh2C+Dh2EVbhnUb4qnWGJ3gA4gsmD2/k71sYCLC44Jvm9aF4OQliVK5OHf400r07IYQRXxghmmsgtsMUAb43SXojJwE3r48qwvUIhFdEN8a5anLPTnI5MBQQXxhGClGTjR0/TTOPqQifFBlPzDXXIde0iPBVCC/iCwfCt4TfPVURvjdJeiPbgVWEPxdhT4aw4Tii8BYqvGvCFvGF8bMq0k9uiXgZZx4T8WleMhTxUUU4ZfmlvLJ7LcYW7XOEF/GFA0G7r7ls861UhH+aZB6TJVYdET6YZWo7hHdJxCK+cFjMMxOusniZmBMRvtx3LFC7QkJFOPRZaUnuD8KL+MLhut8vGRZNRFhWDxidzaYiPO+skDgEEZbJxiuiFPGFwxXgWgUrR9qz2WxXSIgIj3nr8kqHVQDxhQMX4KV223NFRHjaEeGJwTXVnWVqY8r8tc64MQTEFwII8Fwf+twnr0SEv1uskBARlqGVdlw451UDz7vXWMv7dvmFKni7aNf+uoizVdaXYN25TEzJuHKxPwNbaNpNFCwpw/nCG3XAm1draXOnPZvtZ6oDMhFewPlCKCcsoiaHQB6NoMjt+uW5afc9A+d7kuBUZ0B8YSQiLMJ7OTIRFud+ty/vbWLxZRMFIL5gLMRTFatyJEUWcetNPp5QfBFe+BOM+cJOxpbysfhzIp9cXPsS4QXEF1xEOOuUj6+QRD6TDMqxZBMFIL7gQ4RzTPmYK2uEFxBf8C3COaV8zFJ4C44AAsQXAorwW0r5aMqmYPcaIL4QSYQPPeWjKc/Z4xBeQHwhhQgfWspHG+Fl9xogvpBciA8h5aMNVwgvmPKeKoAIIizCW2tmMtk1d3aAl2m0iUK3cMv1HxcvuwcfpW7YcozzBQgqwp2Uj8sDurSZofA+n9hRvJzc0W4A+bX442DRkihBfAFCivAhrZBY6kTjPuGVY+clX4bkUv4ga6X11Y6Ny4aQ7wgwww4AUUS4+SHnts2LcSXy6Qrv3k0Umh9jqiIr1ydbn7tvkcxsMi7+0LwWBeuDcb4AkUT4eZla8/pQjGeFhEysmR7HJI1KrUMTp8VLkqJHfYkYL3SiTj6vMjk6CRBfAN9CPIZEPsZHAGlyHxHTr53/vdHGRoYrvrVuvzNufEYkMOwAkEyEpVuvKyQkBWSVSdFsN1G0Lrbr5sXd/l/nv+uefwPOFyCZCLeJfHJYIdFuothY/s1r5O9nxR8HfHbHjUvuOuILkJMIbzJI5GO9e03fL2U9fT3sIA5af7fQIYpSxXfDHUd8AXIW4ZjL1M4ddq+tmtf09TIyddAzHYaQ1R63ej0r7jTiC5CrCHcT+YReIeF6BNBMf94XL8vKrjrXIcvsZFhFNlvIRNuMpDxvA85wg4Nhy3lzfzkpeMAZbpIk6MpD2WTi7UH/U4T8m/5b/v+FltnLdwHiC5BKhKviZXXEX46U1989xBTezncf6dCCONzuZpJaHW/N3QMACNtAlNoQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAmBN/h9q9//qPd1VPueJvsQpr953/9d9Jjt5uyys6ji9zLCQCIr4mgfS/+SChd7BG2j42wJUkqosJ7n3s5AeAwCJrVrBG0iaHwCkcW7w3B6UjKCQCI715sRSqlm6wIBwA4FPE9thHeVGOpjUMvC4vjW5py1oQOAOQsvjZuMqWgTUZSTgBAfPe6yaPC7jDAHwnrwcahs9IBALJ2vpXl+1M6SpuyPhI2AJCz+Nq4ydTjqAw7AMDBiO8oBO1f//yHjevdsL4XAHIXXxtRSzmOalNOXC8A5Cu+lm5SSDmOejyScgIA4uvVTaZ2lDbDI6x0AICsxdfGTW4S5nMQ4T0yfPsTCXUAwBfvM3CTKV1vNZJygn3D2ubgaO/x317FpTSk/yONv/ybhhVGL76WblJIOY76yeK9PwyuW9JRloHKKiLxmw+xMEzzOZRW1Nbaq4kmapqZTnpdZwbXVr36W+l9rZrX15TLHjuNRvscfbJ8nkyet/m+3mbgGHnuSeozFbzx29IQHwe8JuOUsyGcb2X5/kNxvg+eH5J9AbVRsbhrbvbG8s/vi3CJhPpE7S7EA6YP1mXz+tVRKORzpvJqPrPWh6iOdC9tGg0f9+fvzevcIJ5DZ+872xInswHx3Fevcj9Pu98TQ1Oa7/1scg2/BAikhQaxUUvRFPJDIochQf7T9P1NOX/Z8VmVBmsqJGBvLMTq90TllIfr3NcYf3MtN9rbCNXozbVunwLEn69GYxB74llE93vCeHaqdxXd6xT1qkiML/e9KcSEm083ORbXWxVpuW4C7kEf6CLjsooDMS3nziEeTdJ/Hbi3cemjvD2Nxs+EArGvB5I6X/Wgepf3y3PQ/HORUHgLHUrZyzvPQVVaXvRYxnv3lfO4SI+I6q3B+1KXdeLSS2hi7FJd2SRmeX0IcMRGw1V8c4hnqfd7i7otNa6qDMpuNLz2LkCFeS9kBs537fGzQjI12OCSwykcE+0a2orXwrCBCSEEC0fhnUZuNFzMRC7xXJnEiTaM95nU7dp0uMS3+I4imU5n9nMMwyO2XIzkwTq1uV+WcwlBhkx0YmxIvC1cxdsz++K5HFE8FxkJr5VW+BbfKkQhAzkZny1ZTsl2znaIQJVROW3KcptYeLvlGCK804zq/clgJn6TUXknu4Z81BnnFNfGQ6nexHeAm3wcyYNvMjRyklPA7hDZnIL0yPBaXMVLGvnnJUz6b5ehrtJmuETHp30J71rL332tB9bHPr7kJsA7fnedUTll/fTK9M3vI1XQUFELhddkOrp+9aPnRmyiXXOfgmkzydiuu/zNoB5tN9aEFi8RmK99y310cuZ64GfLPVkalP2scBufFvH7Kteyb3jOsoFKGc/HxbA1t5NtjYY2hKVlnd4Vf2wAStrA+BTfasADMgbnG7WcOsTROpu5uth7T+JWWQTpZ5t1lp7L2a41tRUvKe/5PvehD9158x0iRAvfdaiCM3SMV+677QYPmzpfJ47ndrXLkYfru7Cs1y855eP2OeZrdQ5a4mQ6xg9z6tZRH8IrT9dtGvBfbe+Pr3J2uLd8/7Nbs+n2qTO2LfOROuddLAY0QlLfV02ZTgZMRE8s71PKeF57iufS4rqfchNe3+KbrZscaTl9lyPG6g4vDZVuQrDpTsoDfTLk4Wr+Zj6g3OWeHoBt13qtPY35QBEqxxTPJru/DNy6TR2vcjyB5p2nh8V2vHcsJxU/ZhKstuKwcbnuSO6o3tFlv7C81hPHh+vO43XZTgC1DcfQhqsaWzwP4MnxOf4tx4vy5XwrHw8ezjeoWFcWYjAUm652n9hcWn6Oj+6kl3FQdb028fXkoeE4jn2dCVg79uT+dsjia5s8fZPiYrWLZvxg55Lj1XJ9bt3jJmN0TZ2WGg5wvXNP98jXff7V8v0+Go7RbRYyGDN/rRfb6sjmMy5l5YzvHB2u+FrtMJajeKK43s7kVvf7XPKyus5mx+qaurqwqcW1PudO9dRTeGrumaugtCkpTVm5Du9Yrq1fO2QJK1XsUsRz7WhGWmTlzK2mYh1i/tY6fFH7MmXO4juyZDpBxnv1IZAJgHZdbsoW9jFh19T0oeg7ksnGOeY2iWI7yeZjZUgQM5FZPPueH7LVq7/UtQr4bMDEoXfna9sKpXS+XrtonZysF4kDdF+5Te/R4CEhy0nXuqcRt/kMb5Nktk6qx7GeWnzEytPQm019/TigeE6NxOqiqS8xC4OHjnyI7ycPgRucAduf13s+T5zBIqMg3dW1nEQIdNehDRvn6Pt4Ih8ThTbl/5qgJ1cbNECp8+Ca9pA2mZRP6kw2jHwe8sc+JtwO8bDMneNjuu3V224un+Lr6Op+RBKCdUghCRzDrnXss/xeejS6TfchM+HtrSe9llwEeFB6VF/iWzk+dKMactCKvi3y5NHx/tQx6ren95MyKdNxzDr2MVZtKfjrPfG8yDSef0ToPfjgYsgfvXMMANvNFSkXOx+73vRO1yxXaofrfhralXfdZWW5FM5rI67f7dpAfUpQdufGSp/fscVz24DfFPmsW54MWcbm6nxtv3Dsy8xyDtS+PBRjGO+1asQ9j/f6GGu2Kb8vA3J84PFsMj8kqVxluWEOq16sk7m7TrhVtgKRolYsu2hbx8cG5Bt43egMuXabScK6x9mYNpApx3tTYrW8ref/p3DtxjG9rcHQ4Yahpz9simFjrk7xvOW65Jm6aa5lro1oWfx5/XFZ5DeO7U18bVuyVA+ej1UOtruXJHjubLJs9Qi+adlHMd5buC2FC9Eo23z3Xc+wRexy2zSqfffVdpxSnouZYzxfWsTK2kJXRISXnuq2XeMc/GTp97GDJpEAO02o6LIymxuxbK7zPHK5t9XrJ4sArh2CNfguq0DYJMGpHYd1UpmJxx7xnmQez0k2Y7VC3tSRNDI/TRu5Ic+P65jvJ8v3p+oCuDpAmwX0G0+Batu1dHGUdaS69ZnAxvUzLi3LPksQiz5ErHbsxT3nGU7QaNRFQlSETeN1M+Q73kW+povYlWjZReub8beZlLnzVG6nBsNyBcI60gP16OlBO/UQE7au15cYnHr4DNcGz+bvl56WxtnE4yaTHpLr0E5Q8bWdpKmGLkiOJA5rR/H25u48iFrl+PexXNgQpkPHWgceY3Pl8X5Phh5Br+W3WZb3l2GeATs9v2XS+4xt2srCbb4lO+cryJ7om4gTFa7jTLZDJesE5d4WrJ8iBbvpQ7Vrl5VtnQ06I017E7bCO9s1TzHQoS0GrJH3JWIpxqht4zGHpO82G6kGTUK6iu9m4N9Jl+9nE4D3mmez8jGOl0mwVgnK7dK13DikGnQtY1fAbAX4TE/tNXKL+l5b4V3rYn7fjZeU4buUyTK3bQozUWbyHMZyvG2smPZOlqkS67ieenDWvUiHnKpX286/st055Wlcb6HfWztkCCstRMK1a+lyzT63BNcDGrqpOsi7ben9tHt/qjE25EDLLxbPwZBGd6rXsNHr/63Yv4bWtcGzFdNbjcelQzzbxGPvobUDhkxsY/nTgFgZPMfjJL7SHdPAKYu0SIBsS3LsxZkN7RK7JuiO5NZzGe+VvfqXAx+ahbqVdjNL6RiT7fE+G4sH8NLh+8rCLhG7yzDP04B4lp7qdcJ4zjWL4NJl6ayPMd9cElwcBRKHTZE3PwK4I+9dyX1Bqr937XlMtEyuZuDK5qFSkaszi4s6sMkIRZ8ZuM5MeJ1PUvEhvvMij73Vm0AOsM48WGuHRsc1mY7vpTizDB6ok4EnFJxn8hzsapTHIL7ryMMNLg20kzFzFl8db0z+0Die2NsblPq5uQbsxvG6XRoWm7p9NIylWhvzVI33ydBxf70PVxnFRr3jeV1lGs8+0o3GYO56hJAv51voZNcyp0DzkUyn28qNyCWMcby3G0tXCRo7Kd9n163v+kCeZxAX+3o0s0zjufbQ0IdmqTHqjLd1vrqlNpVIBU0qk9iRhbxuF7EpA37PSRFnuOdJu48nvnZUqQB/STwEYTK+fj6SeLZt6EM7Xm/15nWThTrgjwlcsOuD+sPg2q4ydAy14/2KIXDWyXTk/SKIAeu7HSr7uG2JoofnYKXPQapcs48GZczFpfsyAyGRXvEXX443iPjqTW0Ty3zQm7sMXKnrni7W0jDwjdPR6YL7jxafHVR4Ha/bVXRMV7nMHGLpxnNjvtHemYjuTcj8AdqAyHd8UCe8LOKtnKkNy7jMKJ7XO9JV3iUqUxsvn11SafbxS8wreZVcw8cM5mbXwLfOkk6L/ln5Z+F12OE10euJPSHget1eEsUY5MNd+Uoh2smzeqr1XRo+PGt1gnXCfNLb6q3Q6zBdMWKcCKi5zl/GFs8aK097tGMasfHauK5myEp8ATyLWJ94PeUitB6v87vh20XEvhAd+fOeKoCxckgCuwebVKzfiIxx8I4qAMje9Zp2t7NewwuIL8BYhFeGVO4t/mSV2TFNgPgCjE54xe3KGWKlxZ/NqLnxwJgvgJtIloXfWfi/F8OSAy1Dz84D4guQi/CeWQ4LhCKH/CpgCcMOAMO5yKQcM1wv4gvwlsgh29YyxBZpQHwBsmTAqdYhkHXOV9wNxBfgLVGldrzFS/5hlpaNFCbcAIaRyvWK2J6HSPQCiC/AGIjtODfFS3avJW4X8QV4y0i3XzKsVQHFVsZ0Jdf06g3lsQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHDm/wUYABx6ot8Q1B7KAAAAAElFTkSuQmCC";
 
 // Columnas esperadas en el Excel
@@ -48,7 +51,6 @@ function normalizeExcelDate(raw) {
   return String(raw);
 }
 
-// 👉 Ya NO necesitamos loadImage para el PDF, lo dejo fuera para no estorbar
 
 // ====== PDF empresarial tipo "estado de cuenta" =========
 async function generateBusinessPDF(report, formattedDue, logo = llanogasLogo) {
@@ -353,7 +355,6 @@ async function generateBusinessPDF(report, formattedDue, logo = llanogasLogo) {
   doc.save(fileName || "reporte.pdf");
 }
 
-// ============================================
 export default function Reports() {
   const [showModal, setShowModal] = useState(false);
   const [nuevoReporte, setNuevoReporte] = useState({
@@ -371,7 +372,7 @@ export default function Reports() {
     frecuencia: "Mensual",
   });
 
- // Reportes creados (se inicializa desde localStorage y luego se sincroniza con backend)
+ 
 const [reportesCreados, setReportesCreados] = useState(() => {
   try {
     const saved = localStorage.getItem("reportesCreados");
@@ -428,7 +429,7 @@ React.useEffect(() => {
   } catch (e) {}
 }, [alertDays]);
 
-// 🔹 Cargar reportes desde el backend y sincronizar con localStorage
+// Cargar reportes desde el backend y sincronizar con localStorage
 React.useEffect(() => {
   const loadReports = async () => {
     try {
@@ -439,7 +440,7 @@ React.useEffect(() => {
 
       const withSource = data.map((r) => ({
         ...r,
-        source: r.source || "created", // para que no aparezcan como 'static'
+        source: r.source || "created", 
       }));
 
       setReportesCreados(withSource);
@@ -473,6 +474,9 @@ const searchLower = searchQuery.trim().toLowerCase();
 const [selectedEntity, setSelectedEntity] = useState("Todas");
 const [selectedFrequency, setSelectedFrequency] = useState("Todas");
 const [detailReport, setDetailReport] = useState(null);
+const PAGE_SIZE = 10;
+const [currentPage, setCurrentPage] = useState(1);
+
 
 const filteredReportes = reportesCreados.filter((rep) =>
   Object.values(rep).join(" ").toLowerCase().includes(searchLower)
@@ -600,7 +604,7 @@ function getExtendedDueDate(originalDueDate) {
   return extended;
 }
 
-// ========= NUEVA LÓGICA DE ESTADOS =========
+// ========= LÓGICA DE ESTADOS =========
 
 // fecha del primer acuse cargado
 function getFirstAcuseDate(reportId, attachmentsMap) {
@@ -620,24 +624,23 @@ function getFirstAcuseDate(reportId, attachmentsMap) {
 /**
  * Estados:
  * - "Dentro del plazo"  -> hoy <= due y SIN acuse
+ * - "Pendiente"         -> due < hoy <= due+2 días y SIN acuse
  * - "Enviado a tiempo"  -> acuseDate <= due
  * - "Enviado tarde"     -> due < acuseDate <= due+2 días
- * - "Vencido"           -> hoy > due+2 días y SIN acuse
+ * - "Vencido"           -> hoy > due+2 días y SIN acuse, o acuse > due+2
  */
 function getReportStatus(report, attachmentsMap, todayStart) {
   const parseMaybeDate = (val) =>
     val instanceof Date ? val : val ? parseDateString(val) : null;
 
-  // 1) Vencimiento de referencia:
-  //    - si ya hubo al menos un periodo -> lastDue (periodo actual)
-  //    - si aún no llega el primer vencimiento -> nextDue
+  // Tomamos primero lastDue (periodo actual); si no hay, nextDue (primer vencimiento futuro)
   let due = parseMaybeDate(report.lastDue) || parseMaybeDate(report.nextDue);
   if (!due || isNaN(due)) return "Dentro del plazo";
 
-  const extended = getExtendedDueDate(due); // due + 2 días de gracia
+  const extended = getExtendedDueDate(due); // due + 2 días
   const acuseDate = getFirstAcuseDate(report.id, attachmentsMap);
 
-  // 2) Si hay acuse
+  // --- CASO: CON ACUSE ---
   if (acuseDate) {
     if (acuseDate <= due) return "Enviado a tiempo";
     if (acuseDate > due && acuseDate <= extended) return "Enviado tarde";
@@ -645,41 +648,50 @@ function getReportStatus(report, attachmentsMap, todayStart) {
     return "Vencido";
   }
 
-  // 3) Sin acuse
-  if (todayStart <= extended) {
-    // antes o dentro de la ventana de gracia
+  // --- CASO: SIN ACUSE ---
+  if (todayStart <= due) {
+    // Todavía no ha llegado el vencimiento
     return "Dentro del plazo";
   }
 
-  // ya pasó la ventana de gracia y no hay acuse
+  if (todayStart > due && todayStart <= extended) {
+    // Estamos en los 2 días de gracia
+    return "Pendiente";
+  }
+
+  // Ya se pasó la ventana de gracia y no hay acuse
   return "Vencido";
 }
+
+
 
 
 
 // ========= cálculo de fechas por reporte =========
 
 const createdWithDue = reportesCreados.map((rep) => {
-  // Tomamos como base la fecha de inicio (o la fecha límite si viene de Excel)
-const next = rep.fechaLimiteEnvio
-    ? parseDateString(rep.fechaLimiteEnvio)
-    : computeNextDue(rep.fechaInicio, rep.frecuencia);
+  let lastDue = null;
+  let nextDue = null;
 
 
-  const { lastDue, nextDue } = computePeriodDates(baseDateStr, frecuencia);
+  //     - Traen fechaLimiteEnvio real → usamos ESA como próximo vencimiento
+  if (rep.source === "imported" && rep.fechaLimiteEnvio) {
+    nextDue = parseDateString(rep.fechaLimiteEnvio);
+  } else {
+    // Caso reportes creados manualmente:
+    //     - Se calcula por frecuencia a partir de fechaInicio
+    const freq = rep.frecuencia || rep.freq;
+    if (rep.fechaInicio && freq) {
+      const period = computePeriodDates(rep.fechaInicio, freq);
+      lastDue = period.lastDue;
+      nextDue = period.nextDue;
+    }
+  }
 
   return {
     ...rep,
-    lastDue,   // último vencimiento (≤ hoy) según frecuencia
-    nextDue,   // próximo vencimiento (> hoy)
-  };
-
-
-
-  return {
-    ...rep,
-    lastDue, // último vencimiento real del periodo actual
-    nextDue, // próximo vencimiento futuro
+    lastDue, // último vencimiento del periodo actual 
+    nextDue, // próximo vencimiento que usará la tabla y el estado
   };
 });
 
@@ -779,6 +791,50 @@ const combinedFiltered = combined.filter((x) => {
 
   return matchesSearch && matchesEntity && matchesFreq;
 });
+
+const totalPages = Math.max(
+  1,
+  Math.ceil(combinedFiltered.length / PAGE_SIZE)
+);
+
+const startIndex = (currentPage - 1) * PAGE_SIZE;
+const currentPageItems = combinedFiltered.slice(
+  startIndex,
+  startIndex + PAGE_SIZE
+);
+
+
+const location = useLocation();
+const openedFromQueryRef = React.useRef(false);
+
+React.useEffect(() => {
+  // ya abrimos una vez desde el querystring, no volver a hacerlo
+  if (openedFromQueryRef.current) return;
+
+  const params = new URLSearchParams(location.search);
+  const reportId = params.get("reportId");
+  if (!reportId) return;
+
+  const match = combined.find((r) => String(r.id) === String(reportId));
+  if (!match) return;
+
+  openedFromQueryRef.current = true; // marcamos como atendido
+  setDetailReport(match);
+}, [location.search, combined]);
+
+
+// al cambiar filtros/búsqueda, volvemos a página 1
+React.useEffect(() => {
+  setCurrentPage(1);
+}, [searchQuery, selectedEntity, selectedFrequency]);
+
+// si se reduce el número de registros y la página actual ya no existe
+React.useEffect(() => {
+  if (currentPage > totalPages) {
+    setCurrentPage(totalPages);
+  }
+}, [totalPages, currentPage]);
+
 
   React.useEffect(() => {
     localStorage.setItem("reportesCreados", JSON.stringify(reportesCreados));
@@ -887,7 +943,7 @@ const combinedFiltered = combined.filter((x) => {
 
     const saved = await resp.json();
 
-    // Aseguramos que tenga id y source para la UI
+  
     const reporteGuardado = {
       ...saved,
       source: saved.source || "created",
@@ -922,7 +978,7 @@ const combinedFiltered = combined.filter((x) => {
 };
 
 
-// --- Importar desde Excel (sólo las columnas definidas) ---
+// --- Importar desde Excel  ---
 const handleImportButton = () => {
   if (fileInputRef.current) fileInputRef.current.click();
 };
@@ -964,7 +1020,6 @@ const handleFileChange = async (e) => {
 
         const normalizedHeaders = headerRowRaw.map(normalizeKey);
 
-        // lista de requeridos con su versión "bonita" y normalizada
         const required = Object.values(EXCEL_COLUMNS).map((label) => ({
           label,                  // texto tal cual lo ve el usuario
           norm: normalizeKey(label), // versión normalizada
@@ -1720,23 +1775,22 @@ const handleEliminarReporte = async (id) => {
           detailReport.name ||
           "Reporte sin nombre";
 
-        // NUEVO: estado calculado
         const statusLabel = getReportStatus(
           detailReport,
           attachmentsMap,
           todayStart
         );
 
-        const statusClass =
-          {
-            "Dentro del plazo":
-              "bg-sky-50 text-sky-800 border-sky-100",
-            "Enviado a tiempo":
-              "bg-emerald-50 text-emerald-800 border-emerald-100",
-            "Enviado tarde":
-              "bg-amber-50 text-amber-800 border-amber-100",
-            Vencido: "bg-red-50 text-red-800 border-red-100",
-          }[statusLabel] || "bg-slate-50 text-slate-600 border-slate-100";
+const statusClass =
+  {
+    "Dentro del plazo": "bg-sky-100 text-sky-800",
+    Pendiente: "bg-amber-500 text-amber-800",         
+    "Enviado a tiempo": "bg-emerald-100 text-emerald-800",
+    "Enviado tarde": "bg-amber-100 text-amber-800",
+    Vencido: "bg-red-100 text-red-800",
+  }[statusLabel] || "bg-slate-100 text-slate-700";
+
+
 
         const criticClass =
           {
@@ -2095,7 +2149,7 @@ const handleEliminarReporte = async (id) => {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {combinedFiltered.map((r) => {
+          {currentPageItems.map((r) => {
             const isSoonest =
               soonest &&
               ((soonest.id && r.id && soonest.id === r.id) ||
@@ -2131,18 +2185,21 @@ const handleEliminarReporte = async (id) => {
                 "-": "bg-slate-100 text-slate-700",
               }[criticidad] || "bg-slate-100 text-slate-700";
 
-            // NUEVO: estado calculado
+            
             const statusLabel = getReportStatus(r, attachmentsMap, todayStart);
-            const statusClass =
-              {
-                "Dentro del plazo":
-                  "bg-sky-100 text-sky-800",
-                "Enviado a tiempo":
-                  "bg-emerald-100 text-emerald-800",
-                "Enviado tarde":
-                  "bg-amber-100 text-amber-800",
-                Vencido: "bg-red-100 text-red-800",
-              }[statusLabel] || "bg-slate-100 text-slate-700";
+          const statusClass =
+  {
+    "Dentro del plazo":
+      "bg-sky-200 text-sky-900 border-sky-300",
+    Pendiente:
+      "bg-amber-200 text-amber-900 border-amber-300",   
+    "Enviado a tiempo":
+      "bg-emerald-200 text-emerald-900 border-emerald-300",
+    "Enviado tarde":
+      "bg-amber-200 text-amber-900 border-amber-300",
+    Vencido:
+      "bg-red-200 text-red-900 border-red-300",
+  }[statusLabel] || "bg-slate-200 text-slate-800 border-slate-300";
 
             return (
               <React.Fragment key={r.id || name}>
@@ -2352,23 +2409,64 @@ const handleEliminarReporte = async (id) => {
               );
             })}
           </tbody>
+
         </table>
 
-        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-[11px] text-slate-500">
-          <span>Mostrando {combinedFiltered.length} registros</span>
-          <div className="flex items-center gap-1">
-            <button className="px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50">
-              ‹
-            </button>
-            <span className="px-2">1</span>
-            <button className="px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50">
-              2
-            </button>
-            <button className="px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50">
-              ›
-            </button>
-          </div>
-        </div>
+       <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-[11px] text-slate-500">
+  <span>
+    Mostrando{" "}
+    {combinedFiltered.length === 0
+      ? "0"
+      : `${startIndex + 1}-${Math.min(
+          startIndex + PAGE_SIZE,
+          combinedFiltered.length
+        )}`}{" "}
+    de {combinedFiltered.length} registros
+  </span>
+
+  <div className="flex items-center gap-1">
+    <button
+      onClick={() => currentPage > 1 && setCurrentPage(currentPage - 1)}
+      disabled={currentPage === 1}
+      className={`px-2 py-1 rounded-lg border border-slate-200 ${
+        currentPage === 1
+          ? "opacity-40 cursor-not-allowed"
+          : "hover:bg-slate-50"
+      }`}
+    >
+      ‹
+    </button>
+
+    {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+      <button
+        key={page}
+        onClick={() => setCurrentPage(page)}
+        className={`px-2 py-1 rounded-lg border border-slate-200 ${
+          page === currentPage
+            ? "bg-slate-900 text-white"
+            : "hover:bg-slate-50"
+        }`}
+      >
+        {page}
+      </button>
+    ))}
+
+    <button
+      onClick={() =>
+        currentPage < totalPages && setCurrentPage(currentPage + 1)
+      }
+      disabled={currentPage === totalPages}
+      className={`px-2 py-1 rounded-lg border border-slate-200 ${
+        currentPage === totalPages
+          ? "opacity-40 cursor-not-allowed"
+          : "hover:bg-slate-50"
+      }`}
+    >
+      ›
+    </button>
+  </div>
+</div>
+
       </div>
     </div>
   );
@@ -2411,13 +2509,13 @@ function MetricCard({ label, value, helper, tone = "neutral" }) {
 function LegendPills() {
   return (
     <div className="flex items-center gap-2">
-      <LegendDot className="bg-emerald-500" label="Enviado a tiempo" />
-    
       <LegendDot className="bg-sky-500" label="Dentro del plazo" />
+      <LegendDot className="bg-amber-500" label="Pendiente" />
       <LegendDot className="bg-red-500" label="Vencido" />
     </div>
   );
 }
+
 
 
 function LegendDot({ className, label }) {
